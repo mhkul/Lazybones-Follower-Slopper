@@ -1,0 +1,4 @@
+# Preserve accepted source bytes; no automatic line-ending normalization.
+* -text
+*.png binary
+*.ico binary

@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <PlatformTarget>x64</PlatformTarget>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>Lazybones Follower Slopper</AssemblyName>
+    <Product>Lazybones Follower Slopper</Product>
+    <Title>Lazybones Follower Slopper</Title>
+    <Version>0.1.0</Version>
+    <ApplicationIcon>$(AutoFollowerRoot)assets/branding/icon-v2/lazybones-icon.ico</ApplicationIcon>
+    <RootNamespace>AutoFollower.Gui</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Foundation/Foundation.csproj" />
+    <EmbeddedResource Include="$(RuntimePayload)" LogicalName="AutoFollower.Runtime.zip" Condition="'$(RuntimePayload)' != ''" />
+    <EmbeddedResource Include="$(AutoFollowerRoot)assets/branding/icon-v2/lazybones-icon.ico" LogicalName="AutoFollower.AppIcon.ico" />
+  </ItemGroup>
+</Project>

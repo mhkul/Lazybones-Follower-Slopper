@@ -1,0 +1,23 @@
+Lazybones Follower Slopper 0.1.0 build
+
+Extract the main archive and work inside its src folder. Developer prerequisites:
+Windows x64, PowerShell, .NET SDK 8.0.422, Python 3.12+ for packaging, and
+NuGet access (or a populated cache with -Offline). Lockfiles pin dependencies;
+the script bundles .NET 8.0.28 and Python. End users install neither runtime.
+
+Download https://www.python.org/ftp/python/3.13.9/python-3.13.9-embed-amd64.zip
+SHA256: 91D828C2DA3A029B41699E918674A0CB379C02CF20DAB9C501306885F837402A
+
+From src in PowerShell, using your developer Python and downloaded archive:
+./Gui/Build-Gui.ps1 -Python 'D:/Tools/Python/python.exe' -RuntimeArchive 'D:/Downloads/python-3.13.9-embed-amd64.zip' -Output 'D:/FreshBuild/LazybonesApplication'
+
+Output must be fresh. The EXE embeds the writer, Stages and private runtime.
+No game data, checkout files, tests or reports are build inputs. build-state
+and bin/obj are build artifacts. Edit the included portrait/ICO in assets
+to change the icon. Keep LICENSES.txt when redistributing the application.
+
+The matching thirdparty-source ZIP includes dependency source, full notices,
+component terms and revision/binary correspondence indexes. These describe
+published upstream binaries; upstream source was not independently rebuilt.
+Upstream builds have their own prerequisites. Mutagen's upstream PreBuild
+deletes cache folders: use an isolated profile/cache for upstream builds.
