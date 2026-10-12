@@ -40,7 +40,7 @@ public sealed record ApplicationTools(string Python,string Writer,string Stages)
         var start=new System.Diagnostics.ProcessStartInfo(Python){UseShellExecute=false,CreateNoWindow=true};
         foreach(string arg in new[]{"-I","-B","-c","import sys; sys.path.insert(0, sys.argv[1]); import lean_build_stage, lean_head_stage; sys.exit(0 if sys.version_info >= (3,12) else 1)"})start.ArgumentList.Add(arg);
         start.ArgumentList.Add(Stages);
-        using var process=System.Diagnostics.Process.Start(start)??throw new IOException("Bundled Python did not start.");
+        using var launch=RuntimeStorage.Launch(start); var process=launch.Process;
         if(!process.WaitForExit(5000)){process.Kill(entireProcessTree:true);process.WaitForExit();throw new InvalidDataException("Bundled Python did not complete its version check.");}
         if(process.ExitCode!=0)throw new InvalidDataException("Application stages require Python 3.12 or newer.");
     }

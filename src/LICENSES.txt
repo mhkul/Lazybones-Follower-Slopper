@@ -1,6 +1,6 @@
-Lazybones Follower Slopper 0.1.0 â€” complete license/notice appendix
+Lazybones Follower Slopper 0.1.1 â€” complete license/notice appendix
 Original labeled texts below are included in full. References within historical summaries to upstream-notices/ denote the labeled sections here.
-Application source is in the main archive src/. Matching dependency sources and correspondence indexes are in Lazybones-Follower-Slopper-0.1.0-thirdparty-source.zip.
+Application source is in the main archive src/. Matching dependency sources and correspondence indexes are in Lazybones-Follower-Slopper-0.1.1-thirdparty-source.zip.
 
 
 ===== BEGIN COPYING-GPL-3.0.txt =====
@@ -857,9 +857,11 @@ Python license modification summary: only native-file selection and private
 _pth configuration changed. No official Python/native or stdlib binary was
 modified. Complete embeddable license is supplied, not a shortened PSF label.
 CPython sources include Expat/HACL etc.; zlib 1.3.1 external source is separate.
-Unused OpenSSL/SQLite/libffi/bzip2/xz native extensions are not shipped. The
-standard-library ZIP remains intact. These omitted native services are not
-application requirements; actual active stage imports were verified.
+Unused OpenSSL/SQLite/bzip2/xz native extensions are not shipped. The runtime includes
+unmodified _ctypes.pyd and libffi-8.dll from the same official CPython 3.13.9
+archive for the packaged native-path stage. Their complete libffi notice is
+in the embeddable license below and the runtime LICENSE.txt. The standard-
+library ZIP remains intact; packaged ctypes imports and stages are verified.
 
 ===== END RUNTIME-LICENSING.txt =====
 

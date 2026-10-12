@@ -9,13 +9,15 @@ public static class BundledRuntime
 {
     public static Func<Stream>? Payload { get; set; }
     private static string? _root;
+    private static FileStream? _useLease;
     private static readonly object Gate = new();
+    public static string? CurrentRoot { get { lock (Gate) return _root; } }
     public static string? Resolve()
     {
         if (Payload == null) return null;
         lock (Gate)
         {
-            if (_root != null) return _root;
+            if (_root != null && _useLease != null) return _root;
             using var stream = Payload();
             string hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(stream));
             stream.Position = 0;
@@ -53,6 +55,7 @@ public static class BundledRuntime
                     string staging = Path.Combine(parent, hash + ".partial-" + Guid.NewGuid().ToString("N"));
                     Directory.CreateDirectory(staging);
                     File.WriteAllText(Path.Combine(staging, "owned-runtime.json"), hash);
+                    RuntimeStorage.MarkNew(staging, parent, hash, pins.Select(p => p.Path).ToArray());
                     foreach (var pin in pins)
                     {
                         string path = SafePaths.Below(staging, pin.Path); SafePaths.NoLinks(path);
@@ -63,7 +66,10 @@ public static class BundledRuntime
                     }
                     Validate(staging); Directory.Move(staging, target);
                 }
-                _root = target; return target;
+                _useLease = RuntimeStorage.Use(target);
+                _root = target;
+                RuntimeStorage.Sweep(parent, target);
+                return target;
             }
             finally { if (held) mutex.ReleaseMutex(); }
         }

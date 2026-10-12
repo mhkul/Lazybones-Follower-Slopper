@@ -51,18 +51,18 @@ def alternate_textures(value):
 def ground_calls(mod):
     rows = []
     for rec in mod['records']:
-        if rec['tag'] != 'ARMO':
+        if rec['tag'] not in ('ARMO','AMMO','PROJ'):
             continue
         fs = fields(rec)
         for tag, value in fs:
-            if tag not in ('MOD2','MOD4'):
+            if tag not in (('MOD2','MOD4') if rec['tag']=='ARMO' else ('MODL',)):
                 continue
             model = path(value)
             if not model:
                 continue
-            alt_tag = 'MO2S' if tag == 'MOD2' else 'MO4S'
+            alt_tag = ('MO2S' if tag == 'MOD2' else 'MO4S') if rec['tag']=='ARMO' else 'MODS'
             alts = [a for t,v in fs if t == alt_tag for a in alternate_textures(v)]
-            rows.append(dict(recordId=rec['id'], recordTag='ARMO', field=tag,
+            rows.append(dict(recordId=rec['id'], recordTag=rec['tag'], field=tag,
                 reference='meshes/'+model.replace('\\','/').removeprefix('meshes/'),
                 alternateTextures=alts, required=True))
     return rows

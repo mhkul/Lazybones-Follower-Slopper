@@ -91,6 +91,8 @@ static class Generate {
     ITextureSetGetter t=>Copy(new TextureSet(fk,SkyrimRelease.SkyrimSE),t),
     IArmorGetter a=>Copy(new Armor(fk,SkyrimRelease.SkyrimSE),a),
     IWeaponGetter w=>Copy(new Weapon(fk,SkyrimRelease.SkyrimSE),w),
+    IAmmunitionGetter a=>Copy(new Ammunition(fk,SkyrimRelease.SkyrimSE),a),
+    IProjectileGetter p=>Copy(new Projectile(fk,SkyrimRelease.SkyrimSE),p),
     IStaticGetter s=>Copy(new Static(fk,SkyrimRelease.SkyrimSE),s),
     IArmorAddonGetter a=>Copy(new ArmorAddon(fk,SkyrimRelease.SkyrimSE),a),
     IFormListGetter f=>Copy(new FormList(fk,SkyrimRelease.SkyrimSE),f),
@@ -105,6 +107,19 @@ static class Generate {
    };
    rec.EditorID=lean?Label(rec.GetType().Name,src.EditorID,fk.ID):"AF_"+fk.ID.ToString("X3")+"_"+src.EditorID;rec.IsCompressed=false;used[key]=rec;
    switch(rec) {
+    case Ammunition a:
+     a.Model=ModelCopy(a.Model);
+     if(a.Icons!=null){if(!a.Icons.LargeIconFilename.IsNull)a.Icons.LargeIconFilename=ResolveAsset(a.Icons.LargeIconFilename.GivenPath,"textures");if(a.Icons.SmallIconFilename is {IsNull:false} icon)a.Icons.SmallIconFilename=ResolveAsset(icon.GivenPath,"textures");}
+     if(a.Destructible!=null)foreach(var stage in a.Destructible.Stages)stage.Model=ModelCopy(stage.Model);
+     if(!a.Projectile.IsNull)Clone(a.Projectile.FormKey);
+     foreach(var sound in a.EnumerateFormLinks().Where(l=>privateSoundRecords.Contains(l.FormKey)))Clone(sound.FormKey);
+     dst.Ammunitions.Add(a);break;
+    case Projectile p:
+     p.Model=ModelCopy(p.Model);
+     if(p.Destructible!=null)foreach(var stage in p.Destructible.Stages)stage.Model=ModelCopy(stage.Model);
+     if(!p.MuzzleFlashModel.IsNull)p.MuzzleFlashModel=ResolveAsset(p.MuzzleFlashModel.GivenPath,"meshes");
+     foreach(var sound in p.EnumerateFormLinks().Where(l=>privateSoundRecords.Contains(l.FormKey)))Clone(sound.FormKey);
+     dst.Projectiles.Add(p);break;
     case Weapon w:
      w.Model=ModelCopy(w.Model);w.ScopeModel=ModelCopy(w.ScopeModel);
      foreach(var sound in w.EnumerateFormLinks().Where(l=>privateSoundRecords.Contains(l.FormKey)))Clone(sound.FormKey);
@@ -258,7 +273,7 @@ static class Generate {
   var outfit=new Outfit(New(0x804),SkyrimRelease.SkyrimSE){EditorID="AF_SenOutfit",Items=new()};
   if(lean){foreach(var eq in plan.GetProperty("equipment").EnumerateArray()){
    var key=Clone(Canonical(eq.GetProperty("canonical").GetString()!));
-   if(eq.TryGetProperty("type",out var type)&&type.GetString()=="WEAP"){
+   if(eq.TryGetProperty("type",out var type)&&type.GetString() is "WEAP" or "AMMO"){
     npc.Items??=new();npc.Items.Add(new ContainerEntry{Item=new ContainerItem{Item=new FormLink<IItemGetter>(key),Count=eq.GetProperty("count").GetInt32()}});
    }else outfit.Items.Add(new FormLink<IOutfitTargetGetter>(key));
   }}
@@ -326,6 +341,8 @@ static class Generate {
  static Spell Copy(Spell x,ISpellGetter y){x.DeepCopyIn(y);return x;}
  static MagicEffect Copy(MagicEffect x,IMagicEffectGetter y){x.DeepCopyIn(y);return x;}
  static Weapon Copy(Weapon x,IWeaponGetter y){x.DeepCopyIn(y);return x;}
+ static Ammunition Copy(Ammunition x,IAmmunitionGetter y){x.DeepCopyIn(y);return x;}
+ static Projectile Copy(Projectile x,IProjectileGetter y){x.DeepCopyIn(y);return x;}
  static Static Copy(Static x,IStaticGetter y){x.DeepCopyIn(y);return x;}
  static ColorRecord Copy(ColorRecord x,IColorRecordGetter y){x.DeepCopyIn(y);return x;}
  static SoundDescriptor Copy(SoundDescriptor x,ISoundDescriptorGetter y){x.DeepCopyIn(y);return x;}

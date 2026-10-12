@@ -97,7 +97,9 @@ public sealed class LeanMo2Sources(string data,string output,LeanReadMetrics met
         try{using var f=Open(supplied??Virtual(reference));backing=Backing(f);
             if(supplied==null&&lookupPolicy?.Supported!=true)throw new LeanSourceAdmissionException("Required loose/archive winner remains unsupported: "+reference+"; loose backing="+backing+"; effective invalidation="+(lookupPolicy?.EffectiveInvalidation??"missing")+"; MO2="+(lookupPolicy?.Mo2Version??"unproved")+"; no asset payload admitted");
             if(f.Length>BoundedBinary.Limit)throw new InvalidDataException("Asset exceeds supported bound");bytes=selectedBytes??At(f,0,(int)f.Length);}
-        catch(IOException e)when(supplied==null&&e is FileNotFoundException or DirectoryNotFoundException){IndexArchives();var matches=archives.Where(x=>x.Reader.Members.ContainsKey(reference)).ToArray();
+        catch(IOException e)when(supplied==null&&e is FileNotFoundException or DirectoryNotFoundException){
+            try{IndexArchives();}catch(InvalidDataException cause){throw new InvalidDataException("Index candidate archives for lookup '"+reference+"' ("+consumer+"): "+cause.Message,cause);}
+            var matches=archives.Where(x=>x.Reader.Members.ContainsKey(reference)).ToArray();
             if(matches.Length==0)throw new FileNotFoundException("Required loose/archive member missing",reference);
             // Retained T05 attempt14 establishes later INI-list archive precedence.
             // This is separate from plugin pairing; arbitrary mixed/tied archives
@@ -110,9 +112,10 @@ public sealed class LeanMo2Sources(string data,string output,LeanReadMetrics met
         }
         LeanExportInputs.Nif? nif=null;
         if(Path.GetExtension(reference).Equals(".nif",StringComparison.OrdinalIgnoreCase))try{nif=LeanExportInputs.ReadNif(bytes);}catch(InvalidDataException e){throw new InvalidDataException("Required NIF "+reference+" from "+backing+(member==null?"":" :: "+member)+" ("+consumer+"): "+e.Message,e);}
-        consume?.Invoke(bytes);string digest=BoundedBinary.Digest(bytes);var source=new LeanSource(reference,backing,digest,bytes.Length,consumer,member!=null?"Active BSA exact member":supplied==null?(physical?"Physical/deployed final loose backing":"Selected Data read-only final loose backing"):suppliedKind??"Declared generated export",member,memberOffset,storedBytes,activation,member!=null?archiveBasis:supplied==null?lookupPolicy!.Basis:suppliedBasis??"Explicit selected generated export; independent of installed loose/archive priority",stagePayload,nif?.Dependencies.Select(LeanPackagingChoices.Ref).Distinct().ToArray(),nif?.TextureRepairs);
+        try{consume?.Invoke(bytes);}catch(InvalidDataException e){throw new InvalidDataException("Read required asset "+reference+" from "+backing+(member==null?"":" :: "+member)+" ("+consumer+"): "+e.Message,e);}
+        string digest=BoundedBinary.Digest(bytes);var source=new LeanSource(reference,backing,digest,bytes.Length,consumer,member!=null?"Active BSA exact member":supplied==null?(physical?"Physical/deployed final loose backing":"Selected Data read-only final loose backing"):suppliedKind??"Declared generated export",member,memberOffset,storedBytes,activation,member!=null?archiveBasis:supplied==null?lookupPolicy!.Basis:suppliedBasis??"Explicit selected generated export; independent of installed loose/archive priority",stagePayload,nif?.Dependencies.Select(LeanPackagingChoices.Ref).Distinct().ToArray(),nif?.TextureRepairs);
         if(stagePayload){string target=SafePaths.Below(output,"assets/"+reference);Directory.CreateDirectory(Path.GetDirectoryName(target)!);using(var dest=new FileStream(target,FileMode.CreateNew,FileAccess.Write,FileShare.None))dest.Write(bytes);metrics.BytesCopied+=bytes.Length;metrics.FilesCopied++;}staged.Add(reference,source);Sources.Add(source);
-        if(nif!=null){inspectNif?.Invoke(nif);if(followDependencies)foreach(var dep in nif.Dependencies)pending.Enqueue((dep,"NIF dependency of "+reference));}
+        if(nif!=null){try{inspectNif?.Invoke(nif);}catch(InvalidDataException e){throw new InvalidDataException("Inspect required NIF "+reference+" from "+backing+(member==null?"":" :: "+member)+" ("+consumer+"): "+e.Message,e);}if(followDependencies)foreach(var dep in nif.Dependencies)pending.Enqueue((dep,"NIF dependency of "+reference));}
         return source;
     }
     public void Dispose(){foreach(var item in archives)item.Reader.Dispose();}
@@ -132,7 +135,7 @@ public sealed class LeanRecordIndex(LeanMo2Sources sources,CancellationToken tok
     readonly Dictionary<string,Row> winners=new(StringComparer.OrdinalIgnoreCase),origins=new(StringComparer.OrdinalIgnoreCase);
     readonly Dictionary<string,LeanRecord> records=new(StringComparer.OrdinalIgnoreCase);
     // These groups have concrete head/material/equipment record consumers.
-    static readonly HashSet<string> types=["NPC_","RACE","HDPT","ARMO","ARMA","TXST","WEAP","STAT","AMMO","CELL","WRLD","FLST","ENCH","MGEF","CLAS","CSTY","PERK","SPEL","VTYP","FACT","SNDR","SNCT","SOPM"];
+    static readonly HashSet<string> types=["NPC_","RACE","HDPT","ARMO","ARMA","TXST","WEAP","STAT","AMMO","PROJ","CELL","WRLD","FLST","ENCH","MGEF","CLAS","CSTY","PERK","SPEL","VTYP","FACT","SNDR","SNCT","SOPM"];
     readonly Dictionary<string,byte[]> rawRecords=new(StringComparer.OrdinalIgnoreCase),headers=new(StringComparer.OrdinalIgnoreCase);
     readonly Dictionary<string,(long Bytes,long WriteTime)> pluginIdentity=new(StringComparer.OrdinalIgnoreCase);
     readonly Dictionary<string,string> pluginBackings=new(StringComparer.OrdinalIgnoreCase);
@@ -183,10 +186,12 @@ public sealed class LeanRecordIndex(LeanMo2Sources sources,CancellationToken tok
         if(!(origin?origins:winners).TryGetValue(canonical,out var row))throw new InvalidDataException("Required active record missing: "+canonical);
         if(!allowDeleted&&(row.Flags&0x20)!=0)throw new InvalidDataException("Required winning record is deleted: "+canonical);
         if(records.TryGetValue(cache,out var record))return record;
+        try{
         using var f=sources.Open(row.Backing);byte[] raw=sources.At(f,row.Offset,row.Size),payload=raw[24..];if((row.Flags&0x40000)!=0)payload=BoundedBinary.Inflate(payload[4..],checked((int)BitConverter.ToUInt32(payload)));
         string digest=BoundedBinary.Digest(raw);
         if((BitConverter.ToUInt32(headers[row.Backing],8)&0x80)!=0){payload=(localized??=new(sources,"english")).Inline(row.Plugin,row.Type,payload);byte[] edited=raw[..24];BitConverter.GetBytes(payload.Length).CopyTo(edited,4);BitConverter.GetBytes(row.Flags&~0x40000u).CopyTo(edited,8);raw=edited.Concat(payload).ToArray();}
         record=new(canonical,row.Type,row.Plugin,row.Backing,row.Offset,row.Size,row.Flags,row.Masters,Fields(payload),digest,row.Groups);records.Add(cache,record);rawRecords.Add(cache,raw);return record;
+        }catch(InvalidDataException e){throw new InvalidDataException("Read "+row.Type+" record "+canonical+" from "+row.Plugin+" ("+row.Backing+", record offset="+row.Offset+"): "+e.Message,e);}
     }
     string? RowWorld(Row row){var world=row.Groups.SingleOrDefault(g=>g.Type==1);if(world==null)return null;int slot=(int)(world.Label>>24);if(slot>row.Masters.Length)throw new InvalidDataException("WRLD group master index invalid");return (slot<row.Masters.Length?row.Masters[slot]:row.Plugin)+"|"+(world.Label&0xffffff).ToString("X6");}
     LeanRecord LocationGet(string key,bool origin=false){var record=Get(key,origin);if(!origin&&record.Type=="CELL"&&(record.Flags&0x4000)!=0){var inherited=Get(key,true);var fields=new Dictionary<string,List<byte[]>>(record.Fields);foreach(string tag in new[]{"DATA","XCLC"})if(!fields.ContainsKey(tag)&&inherited.Fields.TryGetValue(tag,out var values))fields[tag]=values;record=record with{Fields=fields};}return record;}

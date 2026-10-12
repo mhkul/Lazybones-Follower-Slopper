@@ -21,11 +21,10 @@ internal static class BuildInputs
         if(setup.Physical!=null){var env=PhysicalEnvironment.Read(setup.Game,setup.Physical,sources,store:preview.Selection.Store);order=env.ActivePlugins;query=env.IniQuery;}
         else{
             var mo2=setup.Mo2!;query=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),"My Games","Skyrim Special Edition","Skyrim.ini");
-            string[] Lines(string name)=>File.ReadAllLines(Path.Combine(mo2.ProfileDirectory,name)).Select(x=>x.Trim()).Where(x=>x.Length>0&&!x.StartsWith('#')).ToArray();
-            var active=Lines("plugins.txt").Where(x=>x.StartsWith('*')).Select(x=>x[1..]).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            active.UnionWith(new[]{"Skyrim.esm","Update.esm","Dawnguard.esm","HearthFires.esm","Dragonborn.esm"}.Where(x=>File.Exists(sources.Virtual(x))));
-            string ccc=Path.Combine(setup.Game,"Skyrim.ccc");if(File.Exists(ccc))active.UnionWith(File.ReadAllLines(ccc).Select(x=>x.Trim()).Where(x=>x.Length>0));
-            var all=Lines("loadorder.txt");if(all.Distinct(StringComparer.OrdinalIgnoreCase).Count()!=all.Length||active.Except(all,StringComparer.OrdinalIgnoreCase).Any())throw new InvalidDataException("Selected active plugin order is incomplete or ambiguous.");order=all.Where(active.Contains).ToArray();
+            string[] ReadLines(string path)=>File.ReadAllText(path).TrimStart('\uFEFF').Split('\n').Select(x=>x.Trim()).Where(x=>x.Length>0&&!x.StartsWith('#')&&!x.StartsWith(';')).ToArray();
+            string[] Lines(string name)=>ReadLines(Path.Combine(mo2.ProfileDirectory,name));
+            string ccc=Path.Combine(setup.Game,"Skyrim.ccc");
+            order=SelectedPluginOrder.Resolve(Lines("plugins.txt"),Lines("loadorder.txt"),File.Exists(ccc)?ReadLines(ccc):[],x=>File.Exists(sources.Virtual(x)),"Selected MO2 profile '"+mo2.ProfileDirectory+"'");
             var ini=ActiveMo2.ParseIni(File.ReadAllText(query));string[] archives=new[]{"Archive/sResourceArchiveList","Archive/sResourceArchiveList2"}.SelectMany(k=>(ini.GetValueOrDefault(k)??"").Split(',',StringSplitOptions.TrimEntries|StringSplitOptions.RemoveEmptyEntries)).ToArray();
             sources.ConfigureArchives(order,archives,File.Exists(Path.Combine(mo2.ProfileDirectory,"archives.txt"))?Lines("archives.txt"):[],LeanLookupPolicy.Evaluate("metadata preview","metadata preview",LeanMo2Sources.EffectiveInvalidation(query),query));
         }

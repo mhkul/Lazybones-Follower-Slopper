@@ -4,13 +4,13 @@
 
 Windows x64 application that creates a follower install ZIP from a Skyrim save
 and matching finished RaceMenu head export. Review follower settings, race,
-equipment and individual asset packaging choices in the GUI. Select Prebuilt,
-OBody or both applicable outputs; both produce a FOMOD installer.
+equipment and individual asset packaging choices in the GUI. Select BodySlide
+build, OBody NG (as-is), or both applicable outputs; both produce a FOMOD installer.
 
 ## Install and use
 
-Download the [Windows x64 application packet](https://github.com/mhkul/Lazybones-Follower-Slopper/releases/download/v0.1.0/Lazybones-Follower-Slopper-0.1.0-windows-x64.zip)
-from [release v0.1.0](https://github.com/mhkul/Lazybones-Follower-Slopper/releases/tag/v0.1.0). Extract outside game, mod and input folders. Run the EXE
+Download the [Windows x64 application packet](https://github.com/mhkul/Lazybones-Follower-Slopper/releases/download/v0.1.1/Lazybones-Follower-Slopper-0.1.1-windows-x64.zip)
+from [release v0.1.1](https://github.com/mhkul/Lazybones-Follower-Slopper/releases/tag/v0.1.1). Extract outside game, mod and input folders. Run the EXE
 directly for physical/deployed Data, or register it in MO2 with empty Arguments
 and run through the intended existing profile. End-user Python and .NET are bundled.
 This source repository does not contain the EXE or dependency binaries.
@@ -19,7 +19,15 @@ Choose the save and head NIF, then Continue. Resolve matching co-save, tint DDS
 and JSlot when requested. Review settings and dependencies, choose outputs and
 the Save ZIP to destination, then Build. Install the resulting follower ZIP
 through your mod manager and follow its dependency instructions.
+Mesh-bearing ammunition is included alongside armor and weapons. Output controls
+are BodySlide build and OBody NG (as-is); unassigned characters use As-is
+(no BodySlide). Missing compatible outfit projects require an explicit recovery
+choice. The error window offers an anonymous diagnostic ZIP by default, with
+private files available only through an unchecked opt-in. Owned scratch cleanup
+preserves unconfirmed packages and delivery retries.
 See the [installation, operation and rebuild guide](src/AGENT_GUIDE.md).
+
+Having trouble? See [how to report a problem](docs/REPORTING_ISSUES.md).
 
 ## Build from source
 
@@ -66,11 +74,16 @@ than missing loose files. Bundled components and assets retain their own terms.
 Creating a follower grants no right to redistribute its source assets.
 
 When redistributing application binaries, supply matching application source
-and access to `Lazybones-Follower-Slopper-0.1.0-thirdparty-source.zip`, the separate
+and access to `Lazybones-Follower-Slopper-0.1.1-thirdparty-source.zip`, the separate
 dependency-source release asset containing full notices and exact binary/revision
 correspondence indexes. This repository does not replace that companion.
 Published upstream binaries were not independently rebuilt. Download matching
-[application source](https://github.com/mhkul/Lazybones-Follower-Slopper/releases/download/v0.1.0/Lazybones-Follower-Slopper-0.1.0-source.zip),
-[dependency source](https://github.com/mhkul/Lazybones-Follower-Slopper/releases/download/v0.1.0/Lazybones-Follower-Slopper-0.1.0-thirdparty-source.zip)
-and [checksums](https://github.com/mhkul/Lazybones-Follower-Slopper/releases/download/v0.1.0/SHA256SUMS.txt)
+[application source](https://github.com/mhkul/Lazybones-Follower-Slopper/releases/download/v0.1.1/Lazybones-Follower-Slopper-0.1.1-source.zip),
+[dependency source](https://github.com/mhkul/Lazybones-Follower-Slopper/releases/download/v0.1.1/Lazybones-Follower-Slopper-0.1.1-thirdparty-source.zip)
+and [checksums](https://github.com/mhkul/Lazybones-Follower-Slopper/releases/download/v0.1.1/SHA256SUMS.txt)
 from the same release.
+
+For binary redistribution, preserve the [Python native component metadata](src/dependencies/python-native-components.json).
+The v0.1.1 dependency-source
+companion includes the matching ctypes/libffi source, full notices and updated
+component indexes alongside the existing dependency sources.

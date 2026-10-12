@@ -7,6 +7,8 @@ from pathlib import Path
 import hashlib, json, os, struct, sys, time
 sys.dont_write_bytecode = True
 PROJECT = Path(__file__).resolve().parents[2]
+_runtime_lease = open(PROJECT / 'runtime-use.lock', 'rb') if (PROJECT / 'runtime-use.lock').is_file() else None
+_storage_lease = None
 sys.path.insert(0, str(PROJECT / 'prototypes/T07'))
 sys.path.insert(0, str(PROJECT / 'prototypes/T02A'))
 from nif_refs import Nif, Cursor, prove_only_references_changed
@@ -67,6 +69,8 @@ def norm(value, field='texture'):
 def run(plan_path):
     started = time.monotonic()
     plan_path = Path(plan_path).resolve(); output = plan_path.parent
+    global _storage_lease
+    _storage_lease = open(output / 'storage.lock', 'rb') if (output / 'storage.lock').is_file() else None
     plan = json.loads(plan_path.read_text(encoding='utf-8-sig'))
     if plan['schema'] != 'lean-export-input-plan/v1': raise ValueError('Unsupported compact plan')
     owner = json.loads((output / 'owned-output.json').read_text(encoding='utf-8-sig'))

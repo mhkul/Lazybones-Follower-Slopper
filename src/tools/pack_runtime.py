@@ -11,8 +11,9 @@ expected = '91D828C2DA3A029B41699E918674A0CB379C02CF20DAB9C501306885F837402A'
 if hashlib.sha256(python_zip.read_bytes()).hexdigest().upper() != expected:
     raise ValueError('Require the pinned official Python 3.13.9 amd64 embeddable ZIP')
 # Native modules used by the production stdlib/stage closure. No general Python
-# environment is exposed. OpenSSL/SQLite/libffi/bzip2/xz extensions are unused.
-keep={'python.exe','python313.dll','python3.dll','vcruntime140.dll','vcruntime140_1.dll','LICENSE.txt','python313.zip','python313._pth','pyexpat.pyd','_elementtree.pyd','select.pyd','unicodedata.pyd'}
+# environment is exposed. ctypes supports verified Windows path aliases and
+# owned-process identities/leases. OpenSSL/SQLite/bzip2/xz extensions are unused.
+keep={'python.exe','python313.dll','python3.dll','vcruntime140.dll','vcruntime140_1.dll','LICENSE.txt','python313.zip','python313._pth','pyexpat.pyd','_elementtree.pyd','select.pyd','unicodedata.pyd','_ctypes.pyd','libffi-8.dll'}
 python = payload / 'tools/python'; python.mkdir(parents=True)
 with zipfile.ZipFile(python_zip) as archive:
     for member in archive.infolist():

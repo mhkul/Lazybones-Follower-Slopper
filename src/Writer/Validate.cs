@@ -19,7 +19,8 @@ static class Validate {
   var retained=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
   if(manifestPath!=null){var manifest=JsonDocument.Parse(File.ReadAllText(manifestPath)).RootElement;foreach(var asset in manifest.GetProperty("assets").EnumerateArray())if(asset.TryGetProperty("mode",out var mode)&&mode.GetString()=="Retain dependency"){
    var source=asset.GetProperty("source");Check(source.GetProperty("kind").GetString()!="Declared generated export"&&source.GetProperty("sha256").GetString()!.Length==64,"Retained provider absent");
-   retained.Add(asset.GetProperty("destination").GetString()!.Replace('/','\\').Replace("meshes\\","",StringComparison.OrdinalIgnoreCase));}}
+   var destination=asset.GetProperty("destination").GetString()!.Replace('/','\\');
+   retained.Add(destination.StartsWith("meshes\\",StringComparison.OrdinalIgnoreCase)?destination[7..]:destination);}}
   bool ValidModel(string path)=>path.StartsWith("autofollower\\",StringComparison.OrdinalIgnoreCase)||retained.Contains(path)||warnedMissing.Contains(AssetKey(path,"meshes"));
   Check(mod.ModHeader.Flags.HasFlag(SkyrimModHeader.HeaderFlag.Small),"Missing ESL flag");
   Check(mod.ModHeader.Stats.Version==1.7f,"Wrong legacy header");
@@ -28,7 +29,7 @@ static class Validate {
   if(planPath==null){var registry=JsonDocument.Parse(File.ReadAllText(@"C:\Skyrim Auto Follower\prototypes\T08\identity-registry.json")).RootElement;
   Check(locals.Select(r=>r.FormKey.ID).Order().SequenceEqual(registry.GetProperty("localIds").EnumerateArray().Select(e=>e.GetUInt32()).Order()),"Identity registry mismatch");}
   else{var plan=JsonDocument.Parse(File.ReadAllText(planPath)).RootElement;Check(locals.Select(r=>r.FormKey.ID).Distinct().Count()==locals.Length,"Duplicate lean local IDs");Check(plan.GetProperty("schema").GetString()=="lean-export-input-plan/v1"&&plan.GetProperty("gaps").GetArrayLength()==0,"Lean generation has unresolved inputs");}
-  var paths=JsonSerializer.Deserialize<Dictionary<string,string>>(File.ReadAllText(masterPaths))!;
+  var paths=JsonDocument.Parse(File.ReadAllText(masterPaths)).RootElement.EnumerateObject().ToDictionary(p=>p.Name,p=>p.Value.GetString()!,StringComparer.OrdinalIgnoreCase);
   var unresolved=new List<string>();var masterRecords=new Dictionary<ModKey,HashSet<FormKey>>();
   foreach(var master in mod.ModHeader.MasterReferences) {
    Check(paths.TryGetValue(master.Master.FileName.String,out var path)&&File.Exists(path),"Missing required master "+master.Master);
@@ -132,10 +133,22 @@ static class Validate {
   }
   var plannedEquipment=planPath==null?Array.Empty<JsonElement>():planData.GetProperty("equipment").EnumerateArray().ToArray();
   bool IsWeapon(JsonElement e)=>e.TryGetProperty("type",out var type)&&type.GetString()=="WEAP";
-  Check(outfit.Items!.Count==(planPath==null?6:plannedEquipment.Count(e=>!IsWeapon(e))),"Included mesh-bearing armor differs from actual plan");
+  bool IsAmmo(JsonElement e)=>e.TryGetProperty("type",out var type)&&type.GetString()=="AMMO";
+  Check(outfit.Items!.Count==(planPath==null?6:plannedEquipment.Count(e=>!IsWeapon(e)&&!IsAmmo(e))),"Included mesh-bearing armor differs from actual plan");
   var weaponEntries=npc.Items?.Where(e=>mod.Weapons.Any(w=>w.FormKey==e.Item.Item.FormKey)).ToArray()??[];
   Check(weaponEntries.Length==plannedEquipment.Count(IsWeapon),"Included weapon inventory differs from actual plan");
-  foreach(var entry in weaponEntries){var weapon=mod.Weapons.Single(w=>w.FormKey==entry.Item.Item.FormKey);Check(weapon.Model!=null&&ValidModel(weapon.Model.File.GivenPath),"Weapon model is neither private nor explicitly retained");if(weapon.ScopeModel!=null&&!weapon.ScopeModel.File.IsNull)Check(ValidModel(weapon.ScopeModel.File.GivenPath),"Weapon scope model missing");if(!weapon.FirstPersonModel.IsNull){var stat=mod.Statics.Single(s=>s.FormKey==weapon.FirstPersonModel.FormKey);Check(stat.Model!=null&&ValidModel(stat.Model.File.GivenPath),"Weapon first-person model missing");}Check(entry.Item.Count>0,"Invalid weapon inventory count");}
+  foreach(var entry in weaponEntries){var weapon=mod.Weapons.Single(w=>w.FormKey==entry.Item.Item.FormKey);Check(weapon.Model!=null&&!weapon.Model.File.IsNull||!weapon.FirstPersonModel.IsNull,"Weapon has no third-person or first-person model call");if(weapon.Model!=null)Check(!weapon.Model.File.IsNull&&ValidModel(weapon.Model.File.GivenPath),"Weapon model is neither private nor explicitly retained");if(weapon.ScopeModel!=null&&!weapon.ScopeModel.File.IsNull)Check(ValidModel(weapon.ScopeModel.File.GivenPath),"Weapon scope model missing");if(!weapon.FirstPersonModel.IsNull){var stat=mod.Statics.Single(s=>s.FormKey==weapon.FirstPersonModel.FormKey);Check(stat.Model!=null&&ValidModel(stat.Model.File.GivenPath),"Weapon first-person model missing");}Check(entry.Item.Count>0,"Invalid weapon inventory count");}
+  var ammoEntries=npc.Items?.Where(e=>mod.Ammunitions.Any(a=>a.FormKey==e.Item.Item.FormKey)).ToArray()??[];
+  Check(ammoEntries.Length==plannedEquipment.Count(IsAmmo),"Included ammunition inventory differs from actual plan");
+  if(ammoEntries.Length>0){
+   var identities=JsonDocument.Parse(File.ReadAllText(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(pluginPath))!,"records.json"))).RootElement.GetProperty("recordMap").EnumerateArray().ToDictionary(x=>x.GetProperty("source").GetString()!,x=>x.GetProperty("target").GetString()!);
+   foreach(var planned in plannedEquipment.Where(IsAmmo)){
+    var source=SettingsWriter.Key(planned.GetProperty("canonical").GetString()!);var target=identities[source.ToString()];var entry=ammoEntries.Single(e=>e.Item.Item.FormKey.ToString()==target);var ammo=mod.Ammunitions.Single(a=>a.FormKey==entry.Item.Item.FormKey);
+    Check(entry.Item.Count==planned.GetProperty("count").GetInt32()&&entry.Item.Count>0,"Ammunition identity/count differs from actual plan");
+    if(ammo.Model!=null&&!ammo.Model.File.IsNull)Check(ValidModel(ammo.Model.File.GivenPath),"Ammunition model is neither private nor explicitly retained");
+    if(!ammo.Projectile.IsNull){var projectile=mod.Projectiles.Single(p=>p.FormKey==ammo.Projectile.FormKey);if(projectile.Model!=null&&!projectile.Model.File.IsNull)Check(ValidModel(projectile.Model.File.GivenPath),"Ammunition projectile model missing");if(!projectile.MuzzleFlashModel.IsNull)Check(ValidModel(projectile.MuzzleFlashModel.GivenPath),"Projectile muzzle model missing");}
+   }
+  }
   var resolvedPlacement=planPath==null?null:PlacementWriter.Read(planData);
   Check(cell.FormKey==(resolvedPlacement==null?new FormKey(ModKey.FromFileName("Skyrim.esm"),0x16DF2):PlacementWriter.Key(resolvedPlacement.ContainerCell))&&actor.MajorFlags.HasFlag(PlacedNpc.MajorFlag.Persistent),"Canonical persistent placement");
   if(resolvedPlacement is {Interior:false}){Check(mod.Cells.Count==0&&mod.Worldspaces.Single().FormKey==PlacementWriter.Key(resolvedPlacement.Worldspace!)&&mod.Worldspaces.Single().MajorRecordFlagsRaw==0x4000&&(cell.MajorRecordFlagsRaw&0x400)!=0,"Exterior persistent CELL/WRLD placement differs");}

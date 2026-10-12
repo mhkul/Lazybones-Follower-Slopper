@@ -1,0 +1,36 @@
+{
+  "format": "Python native runtime source supplement v1",
+  "reason": "ctypes is used for Windows compatible path lookup. These two native components join the existing pinned runtime; developer Python is not required by users.",
+  "components": [
+    {
+      "component": "CPython _ctypes",
+      "version": "3.13.9",
+      "runtimePath": "tools/python/_ctypes.pyd",
+      "bytes": 134488,
+      "sha256": "B9C9E713F11E111DAA55E4A62A135D7E385FA7AA0986D30B286D000E122B13AA",
+      "binarySource": "Official Python 3.13.9 amd64 embeddable archive",
+      "binaryArchiveSha256": "91D828C2DA3A029B41699E918674A0CB379C02CF20DAB9C501306885F837402A",
+      "sourceUrl": "https://www.python.org/ftp/python/3.13.9/Python-3.13.9.tar.xz",
+      "sourceRevision": "v3.13.9",
+      "license": "Python license with bundled component notices",
+      "noticeLocation": "Official Python LICENSE.txt, embedded in runtime; complete text retained in LICENSES.txt",
+      "upstreamBinaryIndependentlyRebuilt": false
+    },
+    {
+      "component": "libffi",
+      "version": "3.4.4",
+      "runtimePath": "tools/python/libffi-8.dll",
+      "bytes": 39696,
+      "sha256": "EFF52743773EB550FCC6CE3EFC37C85724502233B6B002A35496D828BD7B280A",
+      "binarySource": "Official Python 3.13.9 amd64 embeddable archive",
+      "binaryArchiveSha256": "91D828C2DA3A029B41699E918674A0CB379C02CF20DAB9C501306885F837402A",
+      "sourceUrl": "https://github.com/python/cpython-source-deps/archive/73b247f34ef3ae1859b8c2c34d321d34ebc5db15.zip",
+      "sourceRevision": "73b247f34ef3ae1859b8c2c34d321d34ebc5db15",
+      "license": "libffi permissive copyright/permission notice",
+      "noticeLocation": "Official Python LICENSE.txt, embedded in runtime; complete text retained in LICENSES.txt",
+      "upstreamBinaryIndependentlyRebuilt": false
+    }
+  ],
+  "libffiSourceArchiveSha256": "8E9AA32F58C8CEFD4BEF8D4BBCEA111154A84FF9213DBE16379EBD24292FA81E",
+  "sourceProof": "CPython 3.13.9 PCbuild/get_externals.bat selects libffi-3.4.4; libffi.props copies libffi-8.dll. Official binary bytes and complete notices matched. No independent upstream rebuild is claimed."
+}

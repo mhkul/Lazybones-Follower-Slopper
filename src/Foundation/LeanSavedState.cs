@@ -36,7 +36,7 @@ public static class LeanSaveReader
         if(r.Position-start!=headerSize)throw new InvalidDataException("ESS header size mismatch");
         Skip(r,checked(width*height*4));int bodyBase=r.Position;byte[] body;
         if(compression==0)body=r.Take(r.Remaining);
-        else{int decoded=r.Count(),stored=r.Count();byte[] data=r.Take(stored);r.End();body=compression switch{1=>BoundedBinary.Inflate(data,decoded),2=>BoundedBinary.Lz4(data,decoded),_=>throw new InvalidDataException("Unsupported ESS compression")};}
+        else{int decoded=r.Count(),stored=r.Count();byte[] data=r.Take(stored);r.End("ESS compressed framing (compression="+compression+", stored bytes="+stored+", decoded bytes="+decoded+")");body=compression switch{1=>BoundedBinary.Inflate(data,decoded),2=>BoundedBinary.Lz4(data,decoded),_=>throw new InvalidDataException("Unsupported ESS compression")};}
         var b=new BoundedBinary(body);if(b.U8()!=formats.FormVersion)throw new InvalidDataException("Required saved form layout is version78; observed layout is unsupported");
         int pluginSize=b.Count(1024*1024),pluginStart=b.Position;List<PluginEntry> entries=[];
         int full=b.U8();for(int i=0;i<full;i++)entries.Add(new(b.String16(),"full",i));
@@ -75,7 +75,7 @@ public static class LeanSaveReader
         if(n.U8()!=0){Skip(n,checked(n.Count(1024)*4));Skip(n,checked(n.Count(1024)*4));}
         // The ESS header always records actual sex. Male saves commonly omit
         // CHANGE_NPC_GENDER; a byte exists only when that change flag is set.
-        if(Flag(npcFlags,24)&&n.U8()!=sex)throw new InvalidDataException("ESS/NPC sex mismatch");if(Flag(npcFlags,12))Ref(n);if(Flag(npcFlags,13))Ref(n);n.End();
+        if(Flag(npcFlags,24)&&n.U8()!=sex)throw new InvalidDataException("ESS/NPC sex mismatch");if(Flag(npcFlags,12))Ref(n);if(Flag(npcFlags,13))Ref(n);n.End("ESS player NPC change form (flags="+npcFlags.ToString("X8")+")");
         var a=new BoundedBinary(actor);if(!Flag(actorFlags,1)&&!Flag(actorFlags,2)&&!Flag(actorFlags,3)&&!Flag(actorFlags,25))throw new InvalidDataException("Supported saved cell placement unavailable");
         uint location=Ref(a);string cell=(location>>24)==0xff?"dynamic/"+location.ToString("X8"):Canon(location);double[] position=Enumerable.Range(0,3).Select(_=>(double)a.Float()).ToArray(),rotation=Enumerable.Range(0,3).Select(_=>(double)a.Float()).ToArray();
         if(Flag(actorFlags,3)||Flag(actorFlags,25))Skip(a,7);if(Flag(actorFlags,2))Skip(a,Vs(a));Skip(a,8);if(Flag(actorFlags,0))Skip(a,6);if(Flag(actorFlags,7))Ref(a);

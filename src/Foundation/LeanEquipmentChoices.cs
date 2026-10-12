@@ -8,6 +8,7 @@ public static class LeanEquipmentChoices
         var races=LeanCharacterInputs.Resolve(actor,key=>index.Get(key)).ArmorRaces.ToHashSet(StringComparer.OrdinalIgnoreCase);
         return actor.Worn.GroupBy(x=>x.Canonical,StringComparer.OrdinalIgnoreCase).Select(x=>index.Get(x.Key)).Where(record=>{
             if(record.Type=="WEAP")return !LeanModelInputs.MeshlessWeapon(record);
+            if(record.Type=="AMMO")return LeanAmmoInputs.HasModels(record,key=>index.Get(key));
             if(record.Type!="ARMO")return false;
             return record.Refs("MODL").Select(key=>index.Get(key)).Any(ar=>ar.Type=="ARMA"&&ar.Refs("RNAM").Concat(ar.Refs("MODL")).Any(races.Contains)&&(LeanModelInputs.Biped(ar,actor.Sex,false).Paths.Length>0||LeanModelInputs.Biped(ar,actor.Sex,true).Paths.Length>0));
         }).Select(r=>new LeanEquipmentChoice(r.Canonical,r.Text("FULL").FirstOrDefault(x=>x.Length>0)??r.Canonical,r.Type)).ToArray();

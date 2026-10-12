@@ -45,17 +45,29 @@ public static class Semantics
             throw new InvalidDataException("Missing plugin table/context");
         HashSet<string> names = new(StringComparer.OrdinalIgnoreCase);
         HashSet<(string, int)> slots = [];
-        foreach (var p in t.Entries)
+        for (int entry = 0; entry < t.Entries.Count; entry++)
         {
-            if (p == null || string.IsNullOrWhiteSpace(p.Name) || Path.GetFileName(p.Name) != p.Name ||
-                p.Name.IndexOfAny(['/', '\\', ':']) >= 0 || p.Kind is not ("full" or "light") || p.Index < 0 ||
-                p.Index >= (p.Kind == "full" ? 254 : 4096) || !names.Add(p.Name) || !slots.Add((p.Kind, p.Index)))
-                throw new InvalidDataException("Duplicate, invalid or conflicting plugin identity");
+            var p = t.Entries[entry];
+            string where = $"Plugin table '{t.Context}' entry {entry + 1}";
+            if (p == null) throw new InvalidDataException(where + ": null plugin entry.");
+            if (string.IsNullOrWhiteSpace(p.Name)) throw new InvalidDataException(where + ": empty plugin name.");
+            where += $" ('{p.Name}')";
+            if (Path.GetFileName(p.Name) != p.Name || p.Name.IndexOfAny(['/', '\\', ':']) >= 0)
+                throw new InvalidDataException(where + ": invalid plugin filename/path.");
+            if (p.Kind is not ("full" or "light")) throw new InvalidDataException(where + $": unsupported plugin kind '{p.Kind}'.");
+            if (p.Index < 0 || p.Index >= (p.Kind == "full" ? 254 : 4096))
+                throw new InvalidDataException(where + $": {p.Kind} index {p.Index} is out of range.");
+            if (!names.Add(p.Name)) throw new InvalidDataException(where + ": duplicate plugin name.");
+            if (!slots.Add((p.Kind, p.Index)))
+            {
+                var conflict = t.Entries.Take(entry).First(x => x.Kind == p.Kind && x.Index == p.Index);
+                throw new InvalidDataException(where + $": {p.Kind} index {p.Index} conflicts with '{conflict.Name}'.");
+            }
         }
         foreach (var kind in new[] { "full", "light" })
         {
             var indices = t.Entries.Where(p => p.Kind == kind).Select(p => p.Index).Order().ToArray();
-            if (!indices.SequenceEqual(Enumerable.Range(0, indices.Length))) throw new InvalidDataException("Noncontiguous plugin table");
+            if (!indices.SequenceEqual(Enumerable.Range(0, indices.Length))) throw new InvalidDataException($"Plugin table '{t.Context}': noncontiguous {kind} indices ({string.Join(", ", t.Entries.Where(p => p.Kind == kind).Select(p => $"{p.Name}={p.Index}"))}).");
         }
     }
     public static void Placement(Transform t)

@@ -22,7 +22,11 @@ public sealed class BoundedBinary(byte[] bytes)
     public int Count(int max = Limit) { var n = U32(); if (n > max) throw new InvalidDataException("Count exceeds supported bound"); return (int)n; }
     public string String16() => new UTF8Encoding(false, true).GetString(Take(U16()));
     public uint Ref24() => (uint)(U8() << 16 | U8() << 8 | U8());
-    public void End() { if (Remaining != 0) throw new InvalidDataException("Unexpected binary tail"); }
+    public void End(string? context = null)
+    {
+        if (Remaining != 0) throw new InvalidDataException("Unexpected binary tail" + (context == null ? "" : " in " + context)
+            + "; consumed=" + Position + ", remaining=" + Remaining + ", expected buffer size=" + Bytes.Length + " bytes");
+    }
     public static string Digest(byte[] b) => Convert.ToHexString(SHA256.HashData(b));
     public static byte[] Read(string path, int max = Limit)
     {

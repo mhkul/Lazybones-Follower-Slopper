@@ -21,13 +21,24 @@ public static class LeanGenerationStage
         token.ThrowIfCancellationRequested();var tools=ApplicationTools.Resolve(python,writer,stages);tools.Require();writer=tools.Writer;string script=Path.Combine(tools.Stages,"lean_build_stage.py");
         SafePaths.NoLinks(script);SafePaths.NoLinks(writer);if(!File.Exists(writer))throw new InvalidDataException("Required compiled lean plugin writer missing: "+writer);
         var start=new ProcessStartInfo(python){UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=output,RedirectStandardOutput=true,RedirectStandardError=true};start.ArgumentList.Add("-B");start.ArgumentList.Add(script);start.ArgumentList.Add(Path.Combine(output,"input-plan.json"));start.ArgumentList.Add(writer);
-        if(File.Exists(Path.Combine(output,"stop")))throw new OperationCanceledException(token);using var child=Process.Start(start)??throw new IOException("Package stage did not start");
+        if(File.Exists(Path.Combine(output,"stop")))throw new OperationCanceledException(token);
+        File.WriteAllText(SafePaths.Below(output,"package-stage-launch.json"),"{\"launchIntent\":true}");
+        using var launch=RuntimeStorage.Launch(start); var child=launch.Process;
         if(!GetProcessTimes(child.SafeHandle,out long created,out _,out _,out _)){if(!child.HasExited)child.Kill(entireProcessTree:true);throw new IOException("Owned package child identity unavailable");}
         File.WriteAllText(Path.Combine(output,"package-stage-process.json"),JsonSerializer.Serialize(new{child.Id,CreatedFileTime=created,Executable=Path.GetFullPath(python),OwnedBy=Environment.ProcessId,UserMo2Owned=false,OwnedDescendantsOnly=true},Wire.Options));var stdout=child.StandardOutput.ReadToEndAsync();var stderr=child.StandardError.ReadToEndAsync();bool cancelled=false;long peak=0;
         try{while(!child.WaitForExit(100)){try{child.Refresh();peak=Math.Max(peak,child.PeakWorkingSet64);}catch(InvalidOperationException)when(child.HasExited){}if(token.IsCancellationRequested||File.Exists(Path.Combine(output,"stop"))){cancelled=true;child.Kill(entireProcessTree:true);child.WaitForExit();break;}}}
         finally{if(!child.HasExited){child.Kill(entireProcessTree:true);child.WaitForExit();}}
         cancelled|=token.IsCancellationRequested||File.Exists(Path.Combine(output,"stop"));File.WriteAllText(Path.Combine(output,"package-stage.log"),stdout.GetAwaiter().GetResult()+stderr.GetAwaiter().GetResult());File.WriteAllText(Path.Combine(output,"package-stage-exit.json"),JsonSerializer.Serialize(new{child.Id,child.ExitCode,Cancelled=cancelled,PeakWorkingSetBytes=peak,OwnedDescendantsOnly=true,UserMo2Owned=false},Wire.Options));if(cancelled)throw new OperationCanceledException(token);
-        if(child.ExitCode!=0){string detail="No durable stage error; see owned package-stage.log";string path=Path.Combine(output,"package-stage-result.json");if(File.Exists(path)){using var failure=JsonDocument.Parse(File.ReadAllBytes(path));if(failure.RootElement.TryGetProperty("error",out var error))detail=error.GetString()??detail;}throw new InvalidDataException("Required body/ESPFE/package stage failed: "+detail);}using var result=JsonDocument.Parse(File.ReadAllBytes(Path.Combine(output,"package-stage-result.json")));if(result.RootElement.GetProperty("status").GetString()!="structural-build-passed")throw new InvalidDataException("Package stage has no structural success receipt");return result.RootElement.Clone();
+        if(child.ExitCode!=0)
+        {
+            string detail=StageFailureDiagnostics.PackageError(output);
+            var exception=new InvalidDataException("Required body/ESPFE/package stage failed: "+detail);
+            StageFailureDiagnostics.Attach(exception,output,"package",child.ExitCode);
+            throw exception;
+        }
+        using var result=JsonDocument.Parse(File.ReadAllBytes(Path.Combine(output,"package-stage-result.json")));if(result.RootElement.GetProperty("status").GetString()!="structural-build-passed")throw new InvalidDataException("Package stage has no structural success receipt");
+        WorkingStorage.PackageReady(output,result.RootElement.GetProperty("distribution"));
+        return result.RootElement.Clone();
     }
     public static object PrivateHead(string output,string python,CancellationToken token,string? stages=null)
     {
@@ -37,7 +48,9 @@ public static class LeanGenerationStage
         SafePaths.NoLinks(script);SafePaths.NoLinks(python);
         var start=new ProcessStartInfo(python){UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=output,RedirectStandardOutput=true,RedirectStandardError=true};
         start.ArgumentList.Add("-B");start.ArgumentList.Add(script);start.ArgumentList.Add(Path.Combine(output,"input-plan.json"));
-        token.ThrowIfCancellationRequested();using var process=Process.Start(start)??throw new IOException("Private head stage did not start");
+        token.ThrowIfCancellationRequested();
+        File.WriteAllText(SafePaths.Below(output,"head-stage-launch.json"),"{\"launchIntent\":true}");
+        using var launch=RuntimeStorage.Launch(start); var process=launch.Process;
         if(!GetProcessTimes(process.SafeHandle,out long created,out _,out _,out _)){if(!process.HasExited)process.Kill(entireProcessTree:false);throw new IOException("Owned child identity unavailable");}
         File.WriteAllText(Path.Combine(output,"head-stage-process.json"),JsonSerializer.Serialize(new{process.Id,Executable=Path.GetFullPath(python),CreatedFileTime=created,OwnedBy=Environment.ProcessId,UserMo2Owned=false},Wire.Options));
         var stdout=process.StandardOutput.ReadToEndAsync();var stderr=process.StandardError.ReadToEndAsync();
@@ -54,7 +67,12 @@ public static class LeanGenerationStage
         File.WriteAllText(Path.Combine(output,"head-stage.log"),stdout.GetAwaiter().GetResult()+stderr.GetAwaiter().GetResult());
         File.WriteAllText(Path.Combine(output,"head-stage-exit.json"),JsonSerializer.Serialize(new{process.Id,process.ExitCode,Cancelled=cancelled,PeakWorkingSetBytes=peak,UserMo2Owned=false},Wire.Options));
         if(cancelled)throw new OperationCanceledException(token);
-        if(process.ExitCode!=0)throw new InvalidDataException("Private head stage failed; see owned head-stage.log");
+        if(process.ExitCode!=0)
+        {
+            var failure=new InvalidDataException("Private head stage failed; see owned head-stage.log");
+            StageFailureDiagnostics.Attach(failure,output,"private-head",process.ExitCode);
+            throw failure;
+        }
         using var result=JsonDocument.Parse(File.ReadAllBytes(Path.Combine(output,"private-head-result.json")));
         return result.RootElement.Clone();
     }

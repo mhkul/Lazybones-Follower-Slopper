@@ -4,10 +4,11 @@ Only owned staged files are read. Existing editors and binary/package validators
 are reused; neither legacy capture maps nor historical follower payloads enter.
 """
 from pathlib import Path
-import copy, hashlib, json, math, os, shutil, struct, subprocess, sys, time
+import copy, ctypes, hashlib, json, math, os, shutil, struct, subprocess, sys, time
 import xml.etree.ElementTree as ET
 sys.dont_write_bytecode = True
 PROJECT = Path(__file__).resolve().parents[2]
+_runtime_lease = open(PROJECT / 'runtime-use.lock', 'rb') if (PROJECT / 'runtime-use.lock').is_file() else None
 for task in ('T02', 'T02A', 'T06', 'T07', 'T08'):
     sys.path.insert(0, str(PROJECT / 'prototypes' / task))
 from nif_refs import Nif, Cursor, prove_only_references_changed, texture_reference
@@ -54,6 +55,7 @@ def shader_signature(d, shape):
 class Build:
     def __init__(self, plan_path, writer):
         self.started = time.monotonic(); self.root = Path(plan_path).resolve().parent
+        self._storage_lease = open(self.root / 'storage.lock', 'rb') if (self.root / 'storage.lock').is_file() else None
         self.read_bytes = self.generated = self.copied = 0; self.read_files = set(); self.stages = []
         self.plan = self.load(Path(plan_path)); self.owner = self.load(self.root / 'owned-output.json')
         self.overlay_notice = self.plan.get('overlayNotice') or dict(warning='RaceMenu overlays are not fully supported yet and may be missing from this follower.', playerRegistration=None, omittedOperations=[], detectionExhaustive=False)
@@ -133,10 +135,28 @@ class Build:
 
     def run(self, command, cwd, name):
         self.check(); log = self.root / (name + '.log'); started = time.monotonic()
+        self.dump(self.root / (name + '-launch.json'), dict(launchIntent=True))
         with log.open('w', encoding='utf-8') as stream:
-            process = subprocess.Popen([str(v) for v in command], cwd=cwd, stdout=stream, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW)
-            self.dump(self.root / (name + '-process.json'), dict(pid=process.pid, command=[str(v) for v in command], parent=os.getpid(), ownedStage=True, userMo2Owned=False))
+            startup = None; lease_handles = []
+            leases = [_runtime_lease, getattr(self, '_storage_lease', None)]
+            if any(lease is not None for lease in leases):
+                import msvcrt
+                for lease in leases:
+                    if lease is not None:
+                        handle = msvcrt.get_osfhandle(lease.fileno()); os.set_handle_inheritable(handle, True); lease_handles.append(handle)
+                startup = subprocess.STARTUPINFO(lpAttributeList={'handle_list': lease_handles})
             try:
+                process = subprocess.Popen([str(v) for v in command], cwd=cwd, stdout=stream, stderr=subprocess.STDOUT, creationflags=subprocess.CREATE_NO_WINDOW, startupinfo=startup)
+            finally:
+                for handle in lease_handles: os.set_handle_inheritable(handle, False)
+            try:
+                created = ctypes.c_ulonglong(); exited = ctypes.c_ulonglong(); kernel = ctypes.c_ulonglong(); user = ctypes.c_ulonglong()
+                get_times = ctypes.WinDLL('kernel32', use_last_error=True).GetProcessTimes
+                get_times.argtypes = [ctypes.c_void_p] + [ctypes.POINTER(ctypes.c_ulonglong)] * 4
+                get_times.restype = ctypes.c_int
+                if not get_times(int(process._handle), ctypes.byref(created), ctypes.byref(exited), ctypes.byref(kernel), ctypes.byref(user)):
+                    raise OSError('Owned child identity unavailable')
+                self.dump(self.root / (name + '-process.json'), dict(pid=process.pid, createdFileTime=created.value, command=[str(v) for v in command], parent=os.getpid(), ownedStage=True, userMo2Owned=False))
                 while process.poll() is None:
                     self.check()
                     try: process.wait(timeout=0.1)
@@ -147,6 +167,50 @@ class Build:
         self.stages.append(receipt); self.dump(self.root / 'package-stage-progress.json', self.stages)
         if process.returncode: raise ValueError('Required stage failed: ' + name + '; see ' + str(log))
         return receipt
+
+    def native_path(self, path):
+        # Existing filesystem aliases are names for the same owned object, not
+        # links or renamed user folders. NTFS/ReFS need not provide an alias.
+        self.check(); path = self.owned(path); candidates = [str(path)]
+        if os.name == 'nt':
+            kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+            short = kernel.GetShortPathNameW
+            short.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
+            short.restype = ctypes.c_uint32
+            buffer = ctypes.create_unicode_buffer(32768)
+            source = str(path)
+            if not source.startswith('\\\\?\\'):
+                source = '\\\\?\\UNC\\' + source[2:] if source.startswith('\\\\') else '\\\\?\\' + source
+            length = short(source, buffer, len(buffer))
+            if 0 < length < len(buffer):
+                value = buffer.value
+                if value.startswith('\\\\?\\UNC\\'): value = '\\\\' + value[8:]
+                elif value.startswith('\\\\?\\'): value = value[4:]
+                try:
+                    if Path(value).samefile(path): candidates.append(value)
+                except OSError: pass
+        candidates = [p for p in candidates if p.isascii() and len(p) < (248 if path.is_dir() else 260)]
+        if not candidates:
+            raise ValueError('BodySlide build work path unsupported: no short ASCII path is available for this owned attempt. Set OutputRoot in application.json beside the app to a writable short ASCII folder outside game, mod and input folders, then retry. Existing attempts are preserved.')
+        return min(candidates, key=len)
+
+    def compact_project(self, node, inputs):
+        # Relocate only references in the private XML copy. Dataset names,
+        # slider values, project identities and source geometry stay intact.
+        folder = node.findtext('DataFolder').replace('\\', '/')
+        source = norm('ShapeData/' + folder + '/' + node.findtext('SourceFile'))
+        shapes = {s.get('target'): s for s in node.findall('Shape')}
+        for slider in node.findall('Slider'):
+            for data in slider.findall('Data'):
+                value = data.text.replace('\\', '/'); filename, record = value.rsplit('/', 1)
+                data_folder = folder
+                if data.get('local') != 'true':
+                    data_folder = shapes[data.get('target')].get('DataFolder', folder).replace('\\', '/')
+                data.text = inputs[norm('ShapeData/' + data_folder + '/' + filename)] + '/' + record
+        node.find('DataFolder').text = 'i'
+        node.find('SourceFile').text = inputs[source]
+        for shape in node.findall('Shape'):
+            if shape.get('DataFolder') is not None: shape.set('DataFolder', 'i')
 
     def body(self):
         body = self.plan['body']
@@ -165,17 +229,22 @@ class Build:
             return
         base = self.root / 'body-stage'; tool = base / 'tool'; project = tool / 'projects'; tool.mkdir(parents=True)
         required = {r for p in body['projects'] for r in p['inputReferences']}
-        for ref in sorted(required):
+        relocations = []; inputs = {}
+        for index, ref in enumerate(sorted(required)):
             path, raw = self.staged(ref); relative = ref.replace('\\', '/').split('BodySlide/', 1)[1]
-            dest = project / relative; dest.parent.mkdir(parents=True, exist_ok=True); os.rename(path, dest)
+            compact = 'i' + str(index) + Path(relative).suffix.lower()
+            dest = project / 'ShapeData/i' / compact; dest.parent.mkdir(parents=True, exist_ok=True); os.rename(path, dest)
+            inputs[norm(relative)] = compact
+            relocations.append(dict(reference=ref, destination=str(dest.relative_to(base)), bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest().upper()))
         sets = []; source_defs = {}; project_roots = {}
         for row in body['projects']:
             ref = row['definitionReference']
             if ref not in source_defs: source_defs[ref] = ET.fromstring(self.staged(ref)[1])
             candidates = [n for n in source_defs[ref].findall('SliderSet') if n.get('name') == row['name']]
             if len(candidates) != 1: raise ValueError('Required project definition not unique')
-            node = copy.deepcopy(candidates[0]); project_roots[row['name']] = node
-            if row['relocated']: node.find('OutputPath').text = str(Path(row['outputTarget']).parent).replace('/', '\\')
+            node = copy.deepcopy(candidates[0]); self.compact_project(node, inputs); project_roots[row['name']] = node
+            node.find('OutputPath').text = 'meshes/p' + str(len(sets))
+            node.find('OutputFile').text = 'mesh'
             sets.append(node)
         combined = ET.Element('SliderSetInfo', {'version': '1'}); combined.extend(sets)
         (project / 'SliderSets').mkdir(); ET.ElementTree(combined).write(project / 'SliderSets/T09G.osp', encoding='utf-8', xml_declaration=True)
@@ -214,25 +283,56 @@ class Build:
         for ref in body['toolResources']:
             path, _ = self.staged(ref); dest = tool / ref.replace('\\','/').split('BodySlide/',1)[1]
             dest.parent.mkdir(parents=True,exist_ok=True); os.rename(path,dest)
-        exe, _ = self.staged('CalienteTools/BodySlide/BodySlide x64.exe'); os.rename(exe, tool / 'BodySlide x64.exe')
+        tool_ref = body['toolReference']
+        if tool_ref not in ('CalienteTools/BodySlide/BodySlide.exe', 'CalienteTools/BodySlide/BodySlide x64.exe'):
+            raise ValueError('Selected BodySlide executable reference unsupported')
+        exe, _ = self.staged(tool_ref); tool_exe = tool / Path(tool_ref).name; os.rename(exe, tool_exe)
         empty = base / 'empty-data'; empty.mkdir(); outputs = base / 'outputs'; outputs.mkdir()
+        native_tool = self.native_path(tool); native_project = self.native_path(project)
+        native_empty = self.native_path(empty); native_outputs = self.native_path(outputs)
+        # The executable directory controls logger/resource startup. Check the
+        # exact paths BodySlide will compose, rather than individual leaf aliases.
+        for path in tool.rglob('*'):
+            self.owned(path)
+            actual = str(Path(native_tool) / path.relative_to(tool))
+            if len(actual) >= (248 if path.is_dir() else 260):
+                raise ValueError('BodySlide build work path unsupported: a required native resource exceeds the compatible path layout. Set OutputRoot in application.json to a writable short ASCII folder outside game, mod and input folders, then retry. Existing attempts are preserved.')
+        for directory, native in ((tool, native_tool), (project, native_project), (outputs, native_outputs), (empty, native_empty)):
+            probe = self.owned(directory / 'path-check.tmp')
+            created = False
+            try:
+                with probe.open('xb') as stream:
+                    created = True; stream.write(b'BodySlide owned path check')
+                if not (Path(native) / probe.name).samefile(probe): raise ValueError('BodySlide owned path equivalence failed')
+            except OSError as error:
+                raise ValueError('BodySlide build work folder is not writable. Set OutputRoot in application.json to a writable short ASCII folder outside game, mod and input folders, then retry. Existing attempts are preserved.') from error
+            finally:
+                if created: probe.unlink()
+        self.dump(base / 'native-paths.json', dict(tool=native_tool, projects=native_project, outputs=native_outputs, emptyData=native_empty, sameOwnedObjects=True, inputRelocations=relocations))
         config = ET.Element('Config')
-        for key, value in dict(TargetGame='4', WarnMissingGamePath='false', WarnBatchBuildOverride='false', BSATextureScan='false', Language='0', LogLevel='3', GameDataPath=str(empty)+'\\', OutputDataPath=str(outputs)+'\\', ProjectPath=str(project), GameRegKey='', GameRegVal='').items(): ET.SubElement(config, key).text = value
+        for key, value in dict(TargetGame='4', WarnMissingGamePath='false', WarnBatchBuildOverride='false', BSATextureScan='false', Language='0', LogLevel='3', GameDataPath=native_empty+'\\', OutputDataPath=native_outputs+'\\', ProjectPath=native_project, GameRegKey='', GameRegVal='').items(): ET.SubElement(config, key).text = value
         ET.ElementTree(config).write(tool / 'Config.xml', encoding='utf-8', xml_declaration=True)
         ET.ElementTree(ET.Element('BodySlideConfig')).write(tool / 'BodySlide.xml', encoding='utf-8', xml_declaration=True)
         validation = []
         for i, row in enumerate(body['projects']):
             self.check(); dest = outputs / str(i); dest.mkdir()
-            self.run([tool / 'BodySlide x64.exe', '-gbuild', 'T09G-'+str(i), '-p', body['assignedPreset'], '-t', str(dest)+'\\'], tool, 'prebuilt-'+str(i))
-            log = self.read(tool / 'Log_BS.txt').decode('utf-8', errors='replace')
-            if 'All group build sets processed successfully!' not in log: raise ValueError('BodySlide group success receipt absent')
+            # The native log appends. Clear only this owned tool copy's log so
+            # a prior job cannot supply a receipt for the current invocation.
+            native_log = tool / 'Log_BS.txt'; native_log.unlink(missing_ok=True)
+            native_dest = Path(native_outputs) / str(i)
+            if len(str(native_dest / ('meshes/p'+str(i)))) >= 248 or len(str(native_dest / ('meshes/p'+str(i)+'/mesh_1.nif'))) >= 260:
+                raise ValueError('BodySlide build work path unsupported: generated mesh path exceeds the native path limit. Set OutputRoot in application.json to a writable short ASCII folder, then retry.')
+            self.run([Path(native_tool) / tool_exe.name, '-gbuild', 'T09G-'+str(i), '-p', body['assignedPreset'], '-t', str(native_dest)+'\\'], Path(native_tool), 'prebuilt-'+str(i))
+            log = self.read(native_log).decode('utf-8', errors='replace')
+            if not any(marker in log for marker in ('All group build sets processed successfully!', 'All command-line build sets processed successfully!')):
+                raise ValueError('BodySlide group success receipt absent')
             generated = sorted(dest.rglob('*.nif'))
             if len(generated) != 2 or list(dest.rglob('*.tri')): raise ValueError('Unexpected prebuilt weight pair/runtime TRI')
             for endpoint, path in enumerate(generated):
                 ref = norm(row['outputTarget']); ref = ref[:-6] + '_' + str(endpoint) + '.nif'
                 self.prebuilt[ref] = path
             validation.extend(self.validate_prebuilt(row, project_roots[row['name']], project, generated, values, filtered))
-        self.dump(base / 'body-result.json', dict(projects=body['projects'], prebuiltPairs=len(body['projects']), authoredValuesPreserved=len(values), defaults=self.preset['defaults'], garmentChoice=dict(zap='Remove Lower Torso Armor', choice=False, authority='D51'), validation=validation, obodyGeometryGenerated=False))
+        self.dump(base / 'body-result.json', dict(projects=body['projects'], prebuiltPairs=len(body['projects']), authoredValuesPreserved=len(values), defaults=self.preset['defaults'], garmentChoice=dict(zap='Remove Lower Torso Armor', choice=False, authority='D51'), validation=validation, inputRelocations=relocations, obodyGeometryGenerated=False))
         self.dump(self.root/'body-work.json', dict(route='XML-prebuilt', bodySlideInvoked=True, projectsBuilt=len(body['projects']), selectedVariants=self.variants))
 
     def validate_prebuilt(self, row, node, project, generated, values, choices):
@@ -530,9 +630,29 @@ class Build:
             rows.append(dict(id=choice['id'],mode=choice['mode'],status=status,destination=destination,providerName=choice.get('providerName'),sourceIdentity=choice.get('sourceIdentity')))
         return rows
 
+    def retain_package(self, distribution):
+        # The ZIP may outlive a crash before either result publication. Keep a
+        # durable ownership-bound completion receipt while the stage lease is
+        # held; absence of this receipt still cannot authorize ZIP deletion.
+        marker = self.root / 'storage-owner.json'
+        if not marker.is_file():
+            return  # Older isolated stage callers have no lifecycle to update.
+        owner = json.loads(marker.read_text(encoding='utf-8'))
+        path = Path(distribution['path']).resolve()
+        if owner['kind'] != 'Lazybones/working-storage-v1' or Path(owner['directory']).resolve() != self.root or path.parent != self.root / 'packages' or path.suffix.lower() != '.zip':
+            raise ValueError('Package lifecycle ownership disagrees')
+        receipt = dict(kind='Lazybones/package-ready-v1', ownerId=owner['id'], path=str(path), sha256=distribution['sha256'], bytes=path.stat().st_size)
+        pending = self.root / ('state-' + os.urandom(16).hex() + '.partial')
+        with pending.open('x', encoding='utf-8') as output:
+            json.dump(receipt, output)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(pending, self.root / 'package-ready.json')
+
     def build(self):
         try:
             self.body(); manifest = self.isolate(); packages, distribution = self.package(manifest)
+            self.retain_package(distribution)
             self.dump(self.root/'package-stage-result.json', dict(status='structural-build-passed', overlayNotice=self.overlay_notice, packages=packages, distribution={k:v for k,v in distribution.items() if k not in ('branchMaps',)}, stages=self.stages, bytesRead=self.read_bytes, filesRead=len(self.read_files), generatedBytes=self.generated, copiedBytes=self.copied, elapsedMilliseconds=int((time.monotonic()-self.started)*1000), runtimeVerified=False, noDllPexOrHelpers=True, externalToolIoInstrumented=False))
         except BaseException as e:
             self.dump(self.root/'package-stage-result.json', dict(status='cancelled' if isinstance(e,InterruptedError) else 'failed', error=type(e).__name__+': '+str(e), stages=self.stages, bytesRead=self.read_bytes, filesRead=len(self.read_files), elapsedMilliseconds=int((time.monotonic()-self.started)*1000), outputsPreserved=True)); raise

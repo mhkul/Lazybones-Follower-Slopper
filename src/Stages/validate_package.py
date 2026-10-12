@@ -87,12 +87,13 @@ def validate_members(data,plugin,uuid,variant,host_resources=(),retained=(),reta
             ledger.append(dict(origin=origin,reference=ref,member=members[ref],status='Packaged'))
     calls=ground_calls(mod)
     for call in calls:
-        require(f"ARMO {call['recordId']:08X}.{call['field']}",call['reference'],'meshes',True)
+        require(f"{call['recordTag']} {call['recordId']:08X}.{call['field']}",call['reference'],'meshes',True)
         for alt in call['alternateTextures']:
             if not any(r['tag']=='TXST' and r['id']==alt['textureSet'] for r in mod['records']):
                 raise ValueError('Ground alternate TXST absent from plugin')
     material_bindings=[];unavailable_materials=[]
     for ref in sorted({c['reference'].replace('\\','/').lower() for c in calls}):
+        if not any(c['reference'].replace('\\','/').lower()==ref and (c['recordTag']=='ARMO' or c['alternateTextures']) for c in calls):continue
         if ref in missing:
             unavailable_materials.append(dict(reference=ref,status='Material/shape comparison unavailable because the called mesh is missing',evidence=missing[ref]));continue
         _,proof=effective_overrides(ref,external_bytes[ref] if ref in external else data[members[ref]],calls,mod)
@@ -109,7 +110,7 @@ def validate_members(data,plugin,uuid,variant,host_resources=(),retained=(),reta
                 sound=value.rstrip(b'\0').decode().replace('\\','/')
                 if sound.lower().startswith('data/'):sound=sound[5:]
                 require(origin,sound,'sound')
-            elif rec['tag'] in ('ARMA','HDPT','WEAP','STAT') and tag in ('MODL','MOD2','MOD3','MOD4','MOD5'):
+            elif (rec['tag'] in ('AMMO','PROJ') and tag=='DMDL') or (rec['tag'] in ('ARMA','HDPT','WEAP','STAT','AMMO','PROJ') and tag in ('MODL','MOD2','MOD3','MOD4','MOD5')) or (rec['tag']=='PROJ' and tag=='NAM1'):
                 if value.endswith(b'.nif\0'):
                     model=value[:-1].decode();require(origin,model,'meshes')
                     dnam=next((raw for key,raw in fields(rec) if key=='DNAM'),b'')
@@ -118,6 +119,8 @@ def validate_members(data,plugin,uuid,variant,host_resources=(),retained=(),reta
                         require(origin+' implicit weight endpoint',model[:-6]+('_1.nif' if model.lower().endswith('_0.nif') else '_0.nif'),'meshes')
             elif rec['tag']=='HDPT' and tag=='NAM1' and value.endswith(b'.tri\0'):
                 require(origin,value[:-1].decode(),'meshes')
+            elif rec['tag']=='AMMO' and tag in ('ICON','MICO') and value.rstrip(b'\0'):
+                require(origin,value.rstrip(b'\0').decode(),'textures')
             elif rec['tag']=='RACE' and tag=='MODL':
                 ref='meshes/'+normalize(value.rstrip(b'\0').decode()).removeprefix('meshes/')
                 if ref in members or ref in external:

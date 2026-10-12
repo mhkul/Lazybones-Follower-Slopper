@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Reflection;
 using System.Text.Json;
 using AutoFollower;
 
@@ -30,6 +31,11 @@ internal sealed class MainForm : Form
     private long _inputRevision;
     private readonly Label _settingsSummary = new();
     private readonly Label _settingsError = new();
+    private readonly Button _equipmentDetails = new ReadableButton { Text = "Error report…", Dock = DockStyle.Fill, Visible = false };
+    private readonly Button _buildFailureDetails = new ReadableButton { Text = "Error report…", AutoSize = true, Visible = false };
+    private DiagnosticReport? _equipmentReport, _buildFailureReport;
+    private DiagnosticReport? _landingReport;
+    private readonly Button _landingReportButton = new ReadableButton { Text = "Error report…", AutoSize = true, Visible = false };
     private readonly Label _operationStatus = new();
     private TableLayoutPanel? _operationRoot;
     private Control? _operationHeader;
@@ -55,6 +61,7 @@ internal sealed class MainForm : Form
     private bool _obodyAvailable;
     private bool _syncing;
     private string _numericError = "";
+    private string _equipmentError = "";
     private int? _relativeMaximum = 80;
     private double _relativeMultiplier = 1;
     private WorkDialog? _workDialog;
@@ -78,7 +85,7 @@ internal sealed class MainForm : Form
     }
     private void ReconcileEquipment(FollowerInputPreview preview)
     {
-        string scope=EquipmentScope(preview);if(scope!=_equipmentScope){_excludedEquipment=[];_equipmentScope=scope;}
+        string scope=EquipmentScope(preview);if(scope!=_equipmentScope){_excludedEquipment=[];_equipmentScope=scope;_equipmentError="";}
         _equipmentButton.Text=_excludedEquipment.Length==0?"Choose items…":$"{_excludedEquipment.Length} excluded…";
     }
     private async Task ChooseEquipmentAsync()
@@ -86,7 +93,7 @@ internal sealed class MainForm : Form
         if(_operationActive||_preparing||_preview==null||_setup==null)return;
         var preview=_preview;var setup=_setup;ReconcileEquipment(preview);
         _operationCancel=CancellationTokenSource.CreateLinkedTokenSource(_appLifetime.Token);var token=_operationCancel.Token;
-        _operationActive=true;UpdateBuildGate();_equipmentButton.Enabled=false;
+        _equipmentError="";_equipmentReport=null;_operationActive=true;UpdateBuildGate();_equipmentButton.Enabled=false;
         _workDialog=new WorkDialog("Checking equipment","Reading names and applicable models…",()=>_operationCancel.Cancel());_workDialog.Show(this);
         try{
             var catalog=await Task.Run(()=>BuildInputs.EquipmentCatalog(setup,preview,token),token);token.ThrowIfCancellationRequested();
@@ -94,7 +101,7 @@ internal sealed class MainForm : Form
             using var dialog=new EquipmentChoiceDialog(catalog,_excludedEquipment);
             if(dialog.ShowDialog(this)==DialogResult.OK){_excludedEquipment=dialog.Excluded;_previousAssetSelections=null;_readyPackagePath="";ResetResult();ReconcileEquipment(preview);}
         }catch(OperationCanceledException){}
-        catch(Exception e){_settingsError.Text=FriendlyError(e);}
+        catch(Exception e){_equipmentError="Equipment: "+FailureSummary(e);_equipmentReport=FailureReport("Choose items",e);}
         finally{_workDialog?.Complete();_workDialog=null;_operationActive=false;_operationCancel.Dispose();_operationCancel=null;_equipmentButton.Enabled=true;UpdateBuildGate();if(_closePending)Close();}
     }
     private readonly Button[] _buildButtons = new Button[2];
@@ -123,6 +130,7 @@ internal sealed class MainForm : Form
         _environmentLabel.Text = environment;
         _environmentLabel.ForeColor = _setup == null ? DesktopTheme.Error : Color.FromArgb(148, 210, 174);
         _progressTimer.Tick += (_, _) => RefreshProgress();
+        Shown += async (_, _) => await Task.Run(() => { try { WorkingStorage.Sweep(BuildDestinations.DefaultRoot()); } catch (Exception) { /* Optional maintenance never blocks startup. */ } });
         ShowPage(_landing);
         DesktopTheme.Apply(this);
     }
@@ -265,6 +273,10 @@ internal sealed class MainForm : Form
         footer.Controls.Add(next);
         _prepareCancelButton.Click += (_, _) => { _preparationCancel?.Cancel(); _inputRevision++; };
         footer.Controls.Add(_prepareCancelButton);
+        _landingReportButton.Click += (_, _) => ShowFailureReport(_landingReport);
+        footer.Controls.Add(_landingReportButton);
+        var history = new ReadableButton { Text = "Recent diagnostics…", AutoSize = true };
+        history.Click += (_, _) => ShowRecentDiagnostics(); footer.Controls.Add(history);
         root.Controls.Add(footer, 0, 6);
         root.RowCount = 8; root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         _companionDetails.ForeColor = DesktopTheme.Muted;
@@ -373,7 +385,7 @@ internal sealed class MainForm : Form
             ShowSettings();
         }
         catch (OperationCanceledException) { _landingError.Text = "Checking cancelled. Your selected files are kept."; }
-        catch (Exception e) { InvalidatePreparedInputs("Selected inputs could not be prepared."); _landingError.Text = FollowerInputErrors.LandingMessage(e, paths["Jslot"]); }
+        catch (Exception e) { InvalidatePreparedInputs("Selected inputs could not be prepared."); _landingError.Text = FollowerInputErrors.LandingMessage(e, paths["Jslot"]); _landingReport = FailureReport("Prepare inputs", e); _landingReportButton.Visible = true; }
         finally { _workDialog?.Complete(); _workDialog = null; SetLandingBusy(false); _preparationCancel?.Dispose(); _preparationCancel = null; if (_closePending) Close(); }
     }
 
@@ -415,6 +427,7 @@ internal sealed class MainForm : Form
     private void InvalidatePreparedInputs(string message)
     {
         _preview = null;
+        _equipmentError = "";
         _settings = null;
         _numericError = "";
         _acknowledged = false;
@@ -479,7 +492,11 @@ internal sealed class MainForm : Form
         _tabs.TabPages.Add(basic); _tabs.TabPages.Add(advanced);
         root.Controls.Add(_tabs, 0, 2);
         _settingsError.Dock = DockStyle.Fill; _settingsError.ForeColor = DesktopTheme.Error; _settingsError.AutoEllipsis = true;
-        root.Controls.Add(_settingsError, 0, 3);
+        var errorRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1 };
+        errorRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); errorRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 115));
+        errorRow.Controls.Add(_settingsError, 0, 0); errorRow.Controls.Add(_equipmentDetails, 1, 0);
+        _equipmentDetails.Click += (_, _) => ShowFailureReport(_equipmentReport);
+        root.Controls.Add(errorRow, 0, 3);
     }
 
     private SettingsControls CreateSettingsTab(TabPage page, bool advanced, int index)
@@ -504,10 +521,14 @@ internal sealed class MainForm : Form
         var klass = Combo(FollowerSettingsPolicy.Catalog.Classes.Select(x => (x.Id, x.Label)).ToArray());
         var voice = Combo([]);
         var marriage = new ReadableCheckBox { Text = "Marriage eligible", AutoSize = true };
-        var prebuilt = new ReadableCheckBox { Text = "Prebuilt", AutoSize = true, Checked = true };
-        var obody = new ReadableCheckBox { Text = "OBody NG", AutoSize = true, Enabled = false };
+        var prebuilt = new ReadableCheckBox { Text = "BodySlide build", AutoSize = true, Checked = true, AccessibleName = "BodySlide build" };
+        var obody = new ReadableCheckBox { Text = "OBody NG (as-is)", AutoSize = true, Enabled = false, AccessibleName = "OBody NG (as-is)" };
         var outputHelp = new Label { AutoSize = true, ForeColor = DesktopTheme.Muted };
         var outputs = new FlowLayoutPanel { Height = 30, WrapContents = false };
+        _tips.SetToolTip(prebuilt, "Builds affected body and outfit meshes with the saved preset in BodySlide, so the shape works without OBody NG.");
+        prebuilt.AccessibleDescription = "Builds affected body and outfit meshes with the saved preset in BodySlide, so the shape works without OBody NG.";
+        _tips.SetToolTip(obody, ObodyOutputHelp());
+        obody.AccessibleDescription = ObodyOutputHelp();
         outputs.Controls.Add(prebuilt); outputs.Controls.Add(obody);
         outputHelp.Dock=DockStyle.Fill;outputHelp.AutoSize=false;outputHelp.AutoEllipsis=true;notices.Controls.Add(outputHelp,0,0);
         notices.Controls.Add(new Label{Text=LeanOverlayPolicy.Warning,Dock=DockStyle.Fill,ForeColor=Color.FromArgb(237,198,139),AutoEllipsis=true},0,1);
@@ -523,7 +544,7 @@ internal sealed class MainForm : Form
         var limits=new FlowLayoutPanel{WrapContents=false};min.Width=57;max.Width=57;limits.Controls.Add(new Label{Text="Min",AutoSize=true,Padding=new Padding(0,5,0,0)});limits.Controls.Add(min);limits.Controls.Add(new Label{Text="Max",AutoSize=true,Padding=new Padding(0,5,0,0)});limits.Controls.Add(max);
         foreach(Control item in limits.Controls)item.Margin=new Padding(1,0,1,0);
         Field(left,4,"Limits",limits,"Leave Maximum blank for no user-set cap.");
-        Field(left,5,"Outputs",outputs,"One creates a plain ZIP; both create an installer choice.");
+        Field(left,5,"Outputs",outputs,"Select follower versions to include. One selected creates a plain ZIP; both build both versions for an installer choice, and both builds must succeed.");
         var classRow=new TableLayoutPanel{ColumnCount=2,RowCount=1};classRow.RowStyles.Add(new RowStyle(SizeType.Absolute,0));classRow.Layout+=(_,_)=>{if(classRow.RowStyles[0].Height!=classRow.ClientSize.Height)classRow.RowStyles[0].Height=classRow.ClientSize.Height;};classRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));classRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,38));klass.Dock=DockStyle.Fill;klass.Margin=Padding.Empty;classRow.Controls.Add(klass,0,0);
         var defaults=new ReadableButton{Text="↺",Dock=DockStyle.Fill,Margin=new Padding(1)};_tips.SetToolTip(defaults,"Use class defaults for combat, perks and spells.");defaults.AccessibleName="Use class defaults";defaults.Click+=(_,_)=>{ReadControls(index);_settings=FollowerSettingsPolicy.SelectClass(_settings??new(),klass.SelectedValue?.ToString()??"warrior");RefreshSettingsControls();};classRow.Controls.Add(defaults,1,0);
         Field(right,0,"Class",classRow,"Changing class applies its mapped combat, perks and spells. Advanced choices override them.");_tips.SetToolTip(klass,"Changing class applies its mapped combat, perks and spells. Advanced choices override them.");
@@ -539,15 +560,17 @@ internal sealed class MainForm : Form
         _buildButtons[index] = build;
         var footer=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,RowCount=1,Padding=new Padding(6)};footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,150));footer.Controls.Add(disclaimer,0,0);build.Dock=DockStyle.Fill;footer.Controls.Add(build,1,0);tabLayout.Controls.Add(footer,0,2);
         disclaimer.AccessibleDescription="You are responsible for checking permission to share every selected asset.";
-        var controls = new SettingsControls(page, name, character, scale, min, max, mode, multiplier, klass, voice, marriage, combat, perks, spells, disclaimer, build, advanced, basicMapping, prebuilt, obody, outputHelp, raceMode);
+        var controls = new SettingsControls(page, name, character, scale, min, max, mode, multiplier, klass, voice, marriage, combat, perks, spells, disclaimer, build, advanced, basicMapping, prebuilt, obody, outputs, outputHelp, raceMode);
         void OutputChanged()
         {
             if (_syncing || _operationActive) return;
             _outputs = new(prebuilt.Checked, obody.Checked && _obodyAvailable);
+            UpdateOutputHelp(prebuilt, obody, outputs);
             ResetResult(); RefreshSettingsControls();
         }
         prebuilt.CheckedChanged += (_, _) => OutputChanged();
         obody.CheckedChanged += (_, _) => OutputChanged();
+        UpdateOutputHelp(prebuilt, obody, outputs);
         Wire(controls, index);
         return controls;
     }
@@ -661,11 +684,25 @@ internal sealed class MainForm : Form
             if (voices.Any(x => x.Id.Equals(_settings.VoiceId, StringComparison.Ordinal))) c.Voice.SelectedValue = _settings.VoiceId;
             else c.Voice.SelectedIndex = -1;
             c.Marriage.Checked = _settings.MarriageEligible;
+            bool confirmedAsIsRoute = _setup != null && (!_obodyAvailable || _preview?.Cosave.ObodyAssignment == "unassigned");
+            c.Prebuilt.Text = confirmedAsIsRoute ? "As-is (no BodySlide)" : "BodySlide build";
+            c.Prebuilt.AccessibleName = c.Prebuilt.Text;
+            string prebuiltHelp = confirmedAsIsRoute
+                ? "Uses the installed body and outfit meshes without running BodySlide."
+                : "Builds affected body and outfit meshes with the saved preset in BodySlide, so the shape works without OBody NG. Unaffected meshes stay as installed.";
+            _tips.SetToolTip(c.Prebuilt, prebuiltHelp);
+            c.Prebuilt.AccessibleDescription = prebuiltHelp;
+            c.Obody.AccessibleName = "OBody NG (as-is)";
+            c.Obody.Text = "OBody NG (as-is)";
+            string obodyHelp = ObodyOutputHelp();
+            _tips.SetToolTip(c.Obody, obodyHelp);
+            c.Obody.AccessibleDescription = obodyHelp;
             c.Prebuilt.Checked = _outputs.Prebuilt;
             c.Obody.Enabled = _obodyAvailable && !_operationActive;
             c.Obody.Checked = _outputs.Obody && _obodyAvailable;
             c.Prebuilt.Enabled = !_operationActive;
-            c.OutputHelp.Text = _setup == null ? "Environment unresolved. Choose the installed Skyrim folder on Inputs." : (_obodyAvailable ? (_preview?.Cosave.ObodyAssignment=="unassigned"?"This save has no OBody assignment. Prebuilt uses its installed body and outfits as-is.":"OBody is present in the selected Data view.") : "OBody is absent from the confirmed environment. Installed body and outfits stay as-is.");
+            UpdateOutputHelp(c.Prebuilt, c.Obody, c.Outputs);
+            c.OutputHelp.Text = _setup == null ? "Environment unresolved. Choose the installed Skyrim folder on Inputs." : (_obodyAvailable ? (_preview?.Cosave.ObodyAssignment=="unassigned"?"This save has no OBody assignment. Installed body and outfits stay as-is.":"OBody is present in the selected Data view.") : "OBody is absent from the confirmed environment. Installed body and outfits stay as-is.");
             if(_preview?.MaterialConflicts is {Length:>0}){
                 c.OutputHelp.Text="Mouth: finished export used; saved specular override omitted.";
                 c.OutputHelp.ForeColor=Color.FromArgb(237,198,139);
@@ -719,7 +756,8 @@ internal sealed class MainForm : Form
         try { LeanOutputPolicy.Resolve(_outputs, _obodyAvailable);if(_preview!=null)LeanOutputPolicy.CapturedObody(_outputs,_obodyAvailable,_preview.Cosave); }
         catch (InvalidDataException e) { valid = false; message = e.Message; }
         if (_operationActive) { valid = false; message = "A build is running. Wait for it to finish or cancel it before editing settings."; }
-        _settingsError.Text = valid ? "" : message;
+        _settingsError.Text = string.Join("\n", new[] { _equipmentError, valid ? "" : message }.Where(x => x.Length > 0));
+        _equipmentDetails.Visible = _equipmentError.Length > 0 && _equipmentReport != null;
         foreach (var button in _buildButtons) if (button != null)
         {
             bool enabled = valid && _acknowledged && !_operationActive;
@@ -764,7 +802,7 @@ internal sealed class MainForm : Form
             // preset immediately before the first request directory/file write.
             BuildDestinations.RequireRequestPaths(_requestPath, _operationOutput, root, BuildDestinations.Protection(request, tools));
         }
-        catch (Exception e) { _settingsError.Text = FriendlyError(e); return; }
+        catch (Exception e) { _settingsError.Text = FriendlyError(e); _equipmentReport = FailureReport("Build follower", e); _equipmentDetails.Visible = true; return; }
         _operationCancel = CancellationTokenSource.CreateLinkedTokenSource(_appLifetime.Token);
         _operationActive = true;
         UpdateBuildGate();
@@ -794,17 +832,30 @@ internal sealed class MainForm : Form
         }
         catch (OperationCanceledException)
         {
-            _operationStatus.Text = "Build cancelled. Its output has been kept for review.";
+            _operationStatus.Text = "Build cancelled.";
             _deliveryPath = "";
         }
         catch (Exception e)
         {
             ResetResult();
-            _operationStatus.Text = "Build stopped: " + FriendlyError(e);
+            _operationStatus.Text = "Build stopped: " + FailureSummary(e);
+            _buildFailureReport = FailureReport("Build follower", e); _buildFailureDetails.Visible = true;
         }
         finally
         {
             _workDialog?.Complete(); _workDialog = null;
+            if (File.Exists(Path.Combine(_operationOutput, "storage-owner.json")))
+            {
+                _buildFailureReport ??= FailureReport("Build follower", new InvalidDataException("Build diagnostic evidence"));
+                _buildFailureDetails.Text = "Diagnostic report…"; _buildFailureDetails.Visible = true;
+                bool pending = _readyPackagePath.Length > 0 && _deliveryPath.Length == 0;
+                string completedStatus = _deliveryPath.Length > 0 ? "success" : token.IsCancellationRequested ? "cancelled" : "failed";
+                var retention = await Task.Run(() => WorkingStorage.Finish(_operationOutput, pending, completedStatus));
+                if (_operationStatus.Visible) _operationStatus.Text += "\r\n" + retention.Notice;
+                else _technicalDetails.Text += "\r\n" + retention.Notice;
+                if (!pending && retention.Reclaimed) _readyPackagePath = "";
+                await Task.Run(() => WorkingStorage.Sweep(Path.GetDirectoryName(_operationOutput)!));
+            }
             _progressTimer.Stop(); _operationActive = false; _operationCancel?.Dispose(); _operationCancel = null;
             _progress.Style = ProgressBarStyle.Blocks; _progress.Value = 100;
             UpdateBuildGate();
@@ -821,6 +872,7 @@ internal sealed class MainForm : Form
 
     private void ResetResult()
     {
+        _buildFailureReport = null; _buildFailureDetails.Visible = false;
         _deliveryPath = "";
         SetCompletionHeader(false);
         _operationStatus.Visible = true;
@@ -937,6 +989,11 @@ internal sealed class MainForm : Form
                 "unsupported-required-input" => "This selected setup is not supported yet.\r\n" + error,
                 _ => $"Build did not complete ({status}).\r\n{error}\r\nOutput kept at {_operationOutput}"
             };
+            if (status != "cancelled")
+            {
+                _buildFailureReport = FailureReport("Build follower", new InvalidDataException(error), root);
+                _buildFailureDetails.Visible = true;
+            }
         }
     }
 
@@ -947,7 +1004,7 @@ internal sealed class MainForm : Form
         if (File.Exists(full) || Directory.Exists(full)) throw new IOException("That ZIP filename already exists. Retry to save with a new filename; existing files are preserved.");
         foreach(var p in _paths.Values.Append(source).Where(x=>!string.IsNullOrWhiteSpace(x)))if(Path.GetFullPath(p).Equals(full,StringComparison.OrdinalIgnoreCase))throw new IOException("Package destination conflicts with a selected input.");
         string[] directories=_setup!.Mo2 is {} active?SelectedEnvironment.ProtectedDirectories(ActiveMo2.ParseIni(File.ReadAllText(active.InstanceIni)),active.Game,active.InstanceIni):[_setup.Game,_setup.Physical!.IniDirectory,_setup.Physical.PluginDirectory];
-        foreach(var directory in directories.Append(AppContext.BaseDirectory).Concat(_paths.Values.Where(x=>x.Length>0).Select(x=>Path.GetDirectoryName(Path.GetFullPath(x))!)))if(full.StartsWith(Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory))+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase))throw new IOException("Choose a ZIP folder outside input, game and configuration folders.");
+        foreach(var directory in directories.Concat(new[] { AppContext.BaseDirectory, BuildDestinations.DefaultRoot(), Path.Combine(Path.GetTempPath(), "Lazybones Follower Slopper") }).Concat(_paths.Values.Where(x=>x.Length>0).Select(x=>Path.GetDirectoryName(Path.GetFullPath(x))!)))if(full.StartsWith(Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory))+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase))throw new IOException("Choose a ZIP folder outside input, game, configuration and working folders.");
         if (Path.GetFullPath(source).Equals(full, StringComparison.OrdinalIgnoreCase)) throw new IOException("Package destination conflicts with the completed build artifact.");
     }
 
@@ -969,6 +1026,7 @@ internal sealed class MainForm : Form
             }
             _operationCancel?.Token.ThrowIfCancellationRequested();
             if (Hashing.File(destination) != Hashing.File(source)) throw new IOException("The saved ZIP did not match the validated build.");
+            WorkingStorage.Delivered(_operationOutput, source, destination);
             return destination;
         }
         catch { if (created) File.Delete(destination); throw; }
@@ -1019,8 +1077,27 @@ internal sealed class MainForm : Form
         _showZip.Click += (_, _) => { try { Process.Start(ZipExplorerStart(_deliveryPath)); } catch (Exception e) { _operationStatus.Text = "Could not show ZIP: " + FriendlyError(e); _operationStatus.Visible = true; } };
         _editFollower.Click += (_, _) => ShowSettings();
         _anotherCharacter.Click += (_, _) => ShowPage(_landing);
-        _retryDelivery.Click += async (_, _) => { if (PickOutputFolder() && _readyPackagePath.Length > 0) { await FinalizeBuildAsync(0); UpdateOperationActions(); } };
+        _retryDelivery.Click += async (_, _) =>
+        {
+            if (_operationActive || !PickOutputFolder() || _readyPackagePath.Length == 0) return;
+            _operationActive = true; UpdateOperationActions();
+            try
+            {
+                await FinalizeBuildAsync(0);
+                if (_deliveryPath.Length > 0)
+                {
+                    var retention = await Task.Run(() => WorkingStorage.Finish(_operationOutput, false, "success"));
+                    _technicalDetails.Text += "\r\n" + retention.Notice;
+                    if (retention.Reclaimed) _readyPackagePath = "";
+                    _buildFailureReport = FailureReport("Build follower", new InvalidDataException("Build diagnostic evidence"));
+                    _buildFailureDetails.Text = "Diagnostic report…"; _buildFailureDetails.Visible = true;
+                }
+            }
+            catch (Exception e) { _operationStatus.Text = "Saving the finished ZIP stopped: " + FriendlyError(e); _operationStatus.Visible = true; }
+            finally { _operationActive = false; UpdateOperationActions(); if (_closePending) Close(); }
+        };
         actions.Controls.Add(_cancelBuild); actions.Controls.Add(_showZip); actions.Controls.Add(_retryDelivery); actions.Controls.Add(_editFollower); actions.Controls.Add(_anotherCharacter); _exit.Click += (_, _) => Close(); actions.Controls.Add(_exit);
+        _buildFailureDetails.Click += (_, _) => ShowFailureReport(_buildFailureReport); actions.Controls.Add(_buildFailureDetails);
         root.Controls.Add(actions, 0, 3);
     }
 
@@ -1180,6 +1257,127 @@ internal sealed class MainForm : Form
     private void ClearEnvironmentCompanions() { _equipmentScope="";_excludedEquipment=[];_equipmentButton.Text="Choose items…"; _inputRevision++; _explicitJslot = false; foreach (string key in new[] { "Cosave", "TintDds", "Jslot" }) _paths[key] = ""; RefreshCompanionDetails(); }
     private bool EnsureTools(){try{ApplicationTools.Resolve().Require();return true;}catch(Exception e){_settingsError.Text=FriendlyError(e);return false;}}
     private static IEnumerable<Control> Descendants(Control parent)=>parent.Controls.Cast<Control>().SelectMany(x=>new[]{x}.Concat(Descendants(x)));
+    private static string FailureSummary(Exception error)
+    {
+        if (error is AggregateException aggregate) return FailureSummary(aggregate.GetBaseException());
+        for (Exception? cause = error; cause != null; cause = cause.InnerException)
+            if (cause.Data["InputFile"] is string path) return "Could not read " + Path.GetFileName(path) + ". See Error report.";
+        return FriendlyError(error);
+    }
+    private static DiagnosticReport FailureReport(string operation, Exception error, JsonElement? stored = null)
+        => DiagnosticReport.Create(operation, error, stored);
+    private void ShowFailureReport(DiagnosticReport? report)
+    {
+        if (report == null) return;
+        ShowDiagnosticDialog(report, ReferenceEquals(report, _buildFailureReport) && File.Exists(Path.Combine(_operationOutput, "storage-owner.json")) ? _operationOutput : null);
+    }
+    private void ShowDiagnosticDialog(DiagnosticReport report, string? attempt)
+    {
+        using var dialog = CreateFailureReportDialog(report);
+        var save = (Button)dialog.Controls.Find("SaveDiagnosticZip", true).Single();
+        var privateFiles = (CheckBox)dialog.Controls.Find("IncludePrivateDiagnostics", true).Single();
+        var feedback = (Label)dialog.Controls.Find("DiagnosticFeedback", true).Single();
+        save.Click += (_, _) =>
+        {
+            using var picker = new SaveFileDialog { Title = "Save diagnostic ZIP", Filter = "Diagnostic ZIP (*.zip)|*.zip", FileName = privateFiles.Checked ? "Lazybones-diagnostics-private.zip" : "Lazybones-diagnostics-anonymous.zip", OverwritePrompt = false, RestoreDirectory = true };
+            if (picker.ShowDialog(dialog) != DialogResult.OK) return;
+            try { DiagnosticArchive.Save(picker.FileName, report, privateFiles.Checked, attempt, CheckDiagnosticTarget); feedback.Text = privateFiles.Checked ? "Private diagnostic ZIP saved. Share privately." : "Anonymous diagnostic ZIP saved."; }
+            catch (Exception) { feedback.Text = "Could not save diagnostic ZIP. Choose an unused filename outside protected folders and retry. No raw fallback was used."; }
+        };
+        dialog.ShowDialog(this);
+    }
+    private void CheckDiagnosticTarget(string destination)
+    {
+        SafePaths.NoLinks(destination);
+        var dirs = _paths.Values.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => Path.GetDirectoryName(Path.GetFullPath(x))!).Concat(new[] { AppContext.BaseDirectory, BuildDestinations.DefaultRoot(), Path.Combine(Path.GetTempPath(), "Lazybones Follower Slopper") });
+        if (_setup != null)
+        {
+            string[] protectedDirs = _setup.Mo2 is {} active ? SelectedEnvironment.ProtectedDirectories(ActiveMo2.ParseIni(File.ReadAllText(active.InstanceIni)), active.Game, active.InstanceIni) : [_setup.Game, _setup.Physical!.IniDirectory, _setup.Physical.PluginDirectory];
+            dirs = dirs.Concat(protectedDirs);
+        }
+        foreach (string dir in dirs) if (WorkingStorage.Same(destination, dir) || destination.StartsWith(Path.TrimEndingDirectorySeparator(Path.GetFullPath(dir)) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) throw new IOException("Choose a diagnostic ZIP folder outside input, application and working folders.");
+    }
+    private void ShowRecentDiagnostics()
+    {
+        if (_preparing || _operationActive) return;
+        try
+        {
+            string[] recent = WorkingStorage.Recent(BuildDestinations.DefaultRoot());
+            using var chooser = new Form { Text = "Recent diagnostics", Size = new Size(480, 330), StartPosition = FormStartPosition.CenterParent, ShowInTaskbar = false };
+            var list = new ListBox { Dock = DockStyle.Fill };
+            foreach (string path in recent) { var state = WorkingStorage.GetState(path); list.Items.Add(state.UpdatedUtc.ToLocalTime().ToString("g") + " · " + state.Status); }
+            var open = new ReadableButton { Text = "Open diagnostic report", Dock = DockStyle.Bottom, Height = 40, Enabled = recent.Length > 0 };
+            open.Click += (_, _) => { if (list.SelectedIndex >= 0) chooser.DialogResult = DialogResult.OK; };
+            var retry = new ReadableButton { Text = "Save finished ZIP…", Dock = DockStyle.Bottom, Height = 40, Enabled = false };
+            list.SelectedIndexChanged += (_, _) => retry.Enabled = list.SelectedIndex >= 0 && list.SelectedIndex < recent.Length && WorkingStorage.GetState(recent[list.SelectedIndex]).PendingDelivery;
+            retry.Click += async (_, _) =>
+            {
+                if (list.SelectedIndex < 0 || list.SelectedIndex >= recent.Length) return;
+                string attempt = recent[list.SelectedIndex]; retry.Enabled = open.Enabled = list.Enabled = false;
+                _operationActive = true; _operationCancel = CancellationTokenSource.CreateLinkedTokenSource(_appLifetime.Token);
+                try { await RecoverPendingDeliveryAsync(attempt, chooser); chooser.DialogResult = DialogResult.Cancel; }
+                catch (Exception) { _landingError.Text = "The finished ZIP could not be saved. It remains available in Recent diagnostics; choose an unused filename outside protected folders."; }
+                finally { _operationActive = false; _operationCancel.Dispose(); _operationCancel = null; list.Enabled = open.Enabled = true; retry.Enabled = WorkingStorage.GetState(attempt).PendingDelivery; chooser.DialogResult = DialogResult.Cancel; if (_closePending) Close(); }
+            };
+            chooser.FormClosing += (_, e) => { if (_operationActive) e.Cancel = true; };
+            chooser.Controls.Add(list); chooser.Controls.Add(open); chooser.Controls.Add(retry); AppBranding.Apply(chooser); DesktopTheme.Apply(chooser);
+            if (recent.Length > 0) list.SelectedIndex = 0; else list.Items.Add("No compact build diagnostics available.");
+            if (chooser.ShowDialog(this) == DialogResult.OK) { string path = recent[list.SelectedIndex]; ShowDiagnosticDialog(DiagnosticArchive.FromHistory(path), path); }
+        }
+        catch (Exception) { _landingError.Text = "Recent diagnostics could not be opened. Existing working files have been kept."; }
+    }
+    private async Task RecoverPendingDeliveryAsync(string attempt, Form owner)
+    {
+        using (var lease = WorkingStorage.Lease(attempt))
+        {
+            if (!WorkingStorage.GetState(attempt).PendingDelivery) return;
+            var marker = WorkingStorage.RequireOwner(attempt);
+            string requests = SafePaths.Below(marker.Root, "requests");
+            if (!WorkingStorage.Same(Path.GetDirectoryName(marker.Request)!, requests)) throw new IOException("Pending request ownership unavailable.");
+            var request = JsonSerializer.Deserialize<LeanBuildRequest>(WorkingStorage.ReadBytes(marker.Request, 65536), AutoFollower.Wire.Options) ?? throw new IOException("Pending request unavailable.");
+            var protection = BuildDestinations.Protection(request, new ApplicationTools(request.Python, request.PluginWriter, request.StagesDirectory ?? ""));
+            var package = WorkingStorage.PendingPackage(attempt); string source = package.Path, hash = package.Sha256;
+            using var picker = new SaveFileDialog { Title = "Save finished follower ZIP", FileName = Path.GetFileName(source), Filter = "Follower ZIP (*.zip)|*.zip", OverwritePrompt = false, RestoreDirectory = true };
+            if (picker.ShowDialog(owner) != DialogResult.OK) return;
+            string destination = Path.GetFullPath(picker.FileName); CheckDiagnosticTarget(destination);
+            if (protection.Files.Any(p => WorkingStorage.Same(p, destination)) || protection.Directories.Any(p => destination.StartsWith(Path.TrimEndingDirectorySeparator(Path.GetFullPath(p)) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))) throw new IOException("Protected package destination.");
+            bool created = false;
+            try
+            {
+                await Task.Run(() =>
+                {
+                    using var input = new FileStream(source, FileMode.Open, FileAccess.Read, FileShare.Read);
+                    using var output = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None); created = true;
+                    byte[] buffer = new byte[1024 * 1024]; int count;
+                    while ((count = input.Read(buffer)) != 0) { _operationCancel?.Token.ThrowIfCancellationRequested(); output.Write(buffer, 0, count); }
+                });
+                _operationCancel?.Token.ThrowIfCancellationRequested();
+                if (!Hashing.File(destination).Equals(hash, StringComparison.OrdinalIgnoreCase)) throw new IOException("Saved package differs.");
+                WorkingStorage.Delivered(attempt, source, destination);
+            }
+            catch { if (created) try { File.Delete(destination); } catch (IOException) { } catch (UnauthorizedAccessException) { } throw; }
+            _landingError.Text = "Finished follower ZIP saved.";
+        }
+        await Task.Run(() => WorkingStorage.Finish(attempt, false, "success"));
+    }
+    private static Form CreateFailureReportDialog(DiagnosticReport report)
+    {
+        var dialog = new Form { Text = "Diagnostic report", Size = new Size(780, 610), MinimumSize = new Size(480, 420), StartPosition = FormStartPosition.CenterParent, ShowInTaskbar = false };
+        AppBranding.Apply(dialog);
+        var text = new TextBox { Text = report.Text, ReadOnly = true, Multiline = true, ScrollBars = ScrollBars.Both, WordWrap = false, Dock = DockStyle.Fill, AccessibleName = "Anonymized failure report" };
+        var controls = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 132, AutoScroll = true };
+        var copy = new ReadableButton { Text = "Copy report", AutoSize = true }; var close = new ReadableButton { Text = "Close", AutoSize = true, DialogResult = DialogResult.Cancel };
+        copy.Click += (_, _) => { try { Clipboard.SetText(report.Text); copy.Text = "Copied"; } catch (System.Runtime.InteropServices.ExternalException) { copy.Text = "Retry copy"; } };
+        var save = new ReadableButton { Name = "SaveDiagnosticZip", Text = "Save diagnostic ZIP…", AutoSize = true };
+        var privateFiles = new CheckBox { Name = "IncludePrivateDiagnostics", Text = "Include private files (not anonymized)", AutoSize = true, Checked = false, AccessibleDescription = "Optional. Files can reveal paths, character/mod names and settings. Share privately." };
+        var notice = new Label { Text = "May reveal paths, character/mod names and settings. Share privately.", AutoSize = true };
+        var feedback = new Label { Name = "DiagnosticFeedback", AutoSize = true, MaximumSize = new Size(690, 0) };
+        controls.Controls.Add(copy); controls.Controls.Add(save); controls.Controls.Add(close); controls.SetFlowBreak(close, true);
+        controls.Controls.Add(privateFiles); controls.SetFlowBreak(privateFiles, true); controls.Controls.Add(notice); controls.SetFlowBreak(notice, true); controls.Controls.Add(feedback);
+        dialog.Controls.Add(text); dialog.Controls.Add(controls); dialog.CancelButton = close;
+        controls.SizeChanged += (_, _) => { notice.MaximumSize = feedback.MaximumSize = new Size(Math.Max(300, controls.ClientSize.Width - 24), 0); };
+        DesktopTheme.Apply(dialog); return dialog;
+    }
     private static string FriendlyError(Exception e) => e is AggregateException aggregate ? FriendlyError(aggregate.GetBaseException()) : e.Message;
     private static void OpenPath(string path)
     {
@@ -1188,6 +1386,28 @@ internal sealed class MainForm : Form
     }
 
     private sealed record OptionItem(string Id, string Label);
-    private sealed record SettingsControls(TabPage Tab, TextBox ModName, TextBox CharacterName, NumericUpDown Scale, NumericUpDown Minimum, TextBox Maximum, ComboBox LevelMode, NumericUpDown Multiplier, ComboBox Class, ComboBox Voice, CheckBox Marriage, ComboBox Combat, ComboBox Perks, ComboBox Spells, CheckBox Disclaimer, Button Build, bool Advanced, Label? BasicMapping, CheckBox Prebuilt, CheckBox Obody, Label OutputHelp, ComboBox? RaceMode);
+    private void UpdateOutputHelp(CheckBox prebuilt, CheckBox obody, Control outputGroup)
+    {
+        string help = !prebuilt.Checked && !obody.Checked
+            ? "No version is selected. Select at least one output version to build."
+            : prebuilt.Checked && obody.Checked
+            ? "Both versions are selected. Both builds must succeed; the ZIP offers an installer choice."
+            : "One version is selected. The build creates a plain ZIP.";
+        _tips.SetToolTip(outputGroup, help);
+        outputGroup.AccessibleDescription = help;
+    }
+
+    private string ObodyOutputHelp()
+    {
+        if (_setup == null) return "OBody NG availability is not confirmed. Choose the installed Skyrim folder on Inputs first.";
+        if (!_obodyAvailable) return "OBody NG is unavailable in the confirmed environment. The installed meshes stay as-is.";
+        if (_preview?.Cosave.Preset is not null)
+            return "Uses installed body and outfit meshes as-is and applies the saved preset through OBody NG in game, without running BodySlide.";
+        if (_preview?.Cosave.ObodyAssignment == "unassigned")
+            return "This save has no OBody preset assignment. Select As-is (no BodySlide) to use the installed meshes.";
+        return "A supported OBody preset assignment is not confirmed. Refresh the selected inputs before choosing this output.";
+    }
+
+    private sealed record SettingsControls(TabPage Tab, TextBox ModName, TextBox CharacterName, NumericUpDown Scale, NumericUpDown Minimum, TextBox Maximum, ComboBox LevelMode, NumericUpDown Multiplier, ComboBox Class, ComboBox Voice, CheckBox Marriage, ComboBox Combat, ComboBox Perks, ComboBox Spells, CheckBox Disclaimer, Button Build, bool Advanced, Label? BasicMapping, CheckBox Prebuilt, CheckBox Obody, Control Outputs, Label OutputHelp, ComboBox? RaceMode);
 }
 

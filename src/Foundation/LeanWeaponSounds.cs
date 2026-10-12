@@ -32,7 +32,12 @@ public static class LeanWeaponSounds
     Child("PNAM","SNCT");
    }else if(record.Type=="SOPM"&&record.Fields.Keys.Any(x=>!new[]{"EDID","NAM1","FNAM","MNAM","CNAM","SNAM","ONAM","ANAM"}.Contains(x)))throw new InvalidDataException("Required sound output model has unsupported fields: "+key);
   }
-  foreach(var weapon in weapons){currentWeapon=weapon.Canonical;visited.Clear();if(weapon.Type!="WEAP")throw new InvalidDataException("Weapon sound input is not WEAP");foreach(string tag in new[]{"SNAM","XNAM","NAM7","TNAM","UNAM","NAM9","NAM8","YNAM","ZNAM"})foreach(string key in weapon.Refs(tag))Visit(key,"SNDR");}
+  foreach(var weapon in weapons){currentWeapon=weapon.Canonical;visited.Clear();if(weapon.Type is not ("WEAP" or "AMMO"))throw new InvalidDataException("Equipment sound input is not WEAP/AMMO");foreach(string tag in weapon.Type=="WEAP"?new[]{"SNAM","XNAM","NAM7","TNAM","UNAM","NAM9","NAM8","YNAM","ZNAM"}:new[]{"YNAM","ZNAM"})foreach(string key in weapon.Refs(tag))Visit(key,"SNDR");
+   if(weapon.Type=="AMMO"&&LeanAmmoInputs.CalledProjectile(weapon,get) is { } projectile){
+    var data=projectile.Fields.GetValueOrDefault("DATA",[]);if(data.Count!=1||data[0].Length is not (84 or 88 or 92))throw new InvalidDataException("Projectile sound DATA layout unavailable: "+projectile.Canonical);
+    foreach(int offset in new[]{40,56,60})if(projectile.Ref(BitConverter.ToUInt32(data[0],offset)) is { } sound)Visit(sound,"SNDR");
+   }
+  }
   return needed.Order(StringComparer.OrdinalIgnoreCase).ToArray();
  }
 }

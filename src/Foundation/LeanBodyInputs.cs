@@ -9,14 +9,36 @@ public sealed record LeanBodyModel(string Reference,string? Tri,LeanMorphShape[]
 public sealed record LeanBodyProjectOption(string Name,string DefinitionReference,string DefinitionSha256);
 public sealed record LeanBodyProjectChoice(string Target,LeanBodyProjectOption[] Options);
 public sealed record LeanBodyProjectSelection(string Target,string Name,string DefinitionReference,string DefinitionSha256);
-public sealed record LeanBodyPlan(string AssignedPreset,string Xml,string Sha256,string XmlReference,LeanBodyProject[] Projects,string[] ModelTargets,string Rule,object Settings,LeanBodyModel[] Models,string[] ToolResources,LeanBodyProjectSelection[]? ProjectSelections=null);
+public sealed record LeanBodyPlan(string AssignedPreset,string Xml,string Sha256,string XmlReference,LeanBodyProject[] Projects,string[] ModelTargets,string Rule,object Settings,LeanBodyModel[] Models,string[] ToolResources,LeanBodyProjectSelection[]? ProjectSelections=null,string? ToolReference=null);
+public sealed class LeanMissingPrebuiltProjectsException(string[] targets):Exception("Affected installed model has no supported prebuilt project: "+string.Join(';',targets)+". Keep these items with OBody-only output, restore their compatible projects for Prebuilt, or explicitly omit affected optional equipment.")
+{
+    public string[] Targets { get; }=targets;
+}
 public static class LeanBodyInputs
 {
     const string RelocatedProject="CBBE 3BA Creation Club - 1st Person - Boiled Netch Leather Armour";
+    public static string ResolveToolReference(LeanMo2Sources sources)
+    {
+        // Distinct filenames have distinct selected-view winners. Coexistence
+        // does not establish which release owns the shared startup resources.
+        string[] found=new[]{"CalienteTools/BodySlide/BodySlide.exe","CalienteTools/BodySlide/BodySlide x64.exe"}.Where(r=>File.Exists(sources.Virtual(r))).ToArray();
+        if(found.Length==0)throw new FileNotFoundException("BodySlide build requires installed BodySlide.exe or BodySlide x64.exe in the selected environment. Restore a complete matching tool layout, or explicitly choose OBody-only output.");
+        if(found.Length!=1)throw new InvalidDataException("Both BodySlide.exe and BodySlide x64.exe are present in the selected environment; the matching executable/resource layout is ambiguous. Resolve the selected tool layout, or explicitly choose OBody-only output. No executable was selected automatically.");
+        return found[0];
+    }
     static string Ref(string value)=>VirtualPath.Normalize(value.Replace('\\','/'));
     // OutputPath is a directory and installed projects may include a trailing
     // separator. Irrelevant unsafe project destinations are not build inputs.
     static string? ProjectOutput(XElement set){var folder=set.Element("OutputPath")?.Value;var file=set.Element("OutputFile")?.Value;if(folder==null||file==null)return null;try{return Ref(folder.TrimEnd('\\','/')+"/"+file+"_1.nif");}catch(InvalidDataException){return null;}}
+    public static string[] DefinitionReferences(LeanMo2Sources sources)
+    {
+        const string root="CalienteTools/BodySlide/SliderSets";string directory=sources.Virtual(root);
+        if(!Directory.Exists(directory))return [];
+        // BodySlide 5.7.1 LoadSliderSets uses recursive GetAllFiles for both.
+        return Directory.EnumerateFiles(directory,"*",SearchOption.AllDirectories)
+            .Where(p=>Path.GetExtension(p).Equals(".osp",StringComparison.OrdinalIgnoreCase)||Path.GetExtension(p).Equals(".xml",StringComparison.OrdinalIgnoreCase))
+            .Select(p=>Ref(root+"/"+Path.GetRelativePath(directory,p))).Order(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
     public static LeanBodyProjectSelection ResolveProjectChoice(LeanBodyProjectChoice choice,LeanBodyProjectSelection[]? selections=null,Func<LeanBodyProjectChoice,LeanBodyProjectSelection?>? choose=null,CancellationToken token=default)
     {
         token.ThrowIfCancellationRequested();var pinned=selections?.Where(s=>s.Target.Equals(choice.Target,StringComparison.OrdinalIgnoreCase)).ToArray()??[];
@@ -48,8 +70,8 @@ public static class LeanBodyInputs
         var authoredProject=presetDocument.Root?.Elements("Preset").Where(p=>(string?)p.Attribute("name")==preset).Select(p=>(string?)p.Attribute("set")).SingleOrDefault();
         bool RelocationEligible(string name)=>name==RelocatedProject||name==authoredProject;
         List<(string Target,string Ref,byte[] Bytes,XElement Set)> candidates=[];
-        foreach(string file in Directory.EnumerateFiles(sources.Virtual(root+"SliderSets"),"*.osp",SearchOption.TopDirectoryOnly)){
-            string reference=root+"SliderSets/"+Path.GetFileName(file);var candidate=sources.ReadLooseCandidate(reference);using var input=new MemoryStream(candidate.Bytes,false);XDocument doc;try{doc=XDocument.Load(input);}catch(System.Xml.XmlException){continue;}
+        foreach(string reference in DefinitionReferences(sources)){
+            token.ThrowIfCancellationRequested();var candidate=sources.ReadLooseCandidate(reference);using var input=new MemoryStream(candidate.Bytes,false);XDocument doc;try{doc=XDocument.Load(input);}catch(System.Xml.XmlException){continue;}
             foreach(var set in doc.Root?.Elements("SliderSet")??[]){
                 string name=(string?)set.Attribute("name")??"";string? destination=ProjectOutput(set);
                 bool exact=destination!=null&&targets.Contains(destination,StringComparer.OrdinalIgnoreCase);
@@ -58,6 +80,9 @@ public static class LeanBodyInputs
                 candidates.Add((exact?targets.Single(x=>x.Equals(destination,StringComparison.OrdinalIgnoreCase)):relocated[0],reference,candidate.Bytes,set));
             }
         }
+        // Establish complete coverage before asking for ambiguous selections,
+        // so optional-outfit recovery does not repeat a user's body choice.
+        if(targets.Any(x=>!candidates.Any(c=>c.Target.Equals(x,StringComparison.OrdinalIgnoreCase))))throw new LeanMissingPrebuiltProjectsException(targets.Where(x=>!candidates.Any(c=>c.Target.Equals(x,StringComparison.OrdinalIgnoreCase))).ToArray());
         List<LeanBodyProjectSelection> projectSelections=[];
         foreach(var group in candidates.GroupBy(x=>x.Target,StringComparer.OrdinalIgnoreCase)){
             var entries=group.ToArray();var entry=entries[0];
@@ -71,7 +96,6 @@ public static class LeanBodyInputs
             string name=(string?)entry.Set.Attribute("name")??throw new InvalidDataException("Required project name absent");if(!selected.TryAdd(name,(entry.Ref,entry.Bytes,entry.Set)))throw new InvalidDataException("Required project name collision: "+name);
         }
         if(request.BodyProjectSelections?.Any(s=>!projectSelections.Contains(s))==true)throw new InvalidDataException("A requested prebuilt project is not a current selectable target; refresh the project choices");
-        if(targets.Any(x=>!candidates.Any(c=>c.Target.Equals(x,StringComparison.OrdinalIgnoreCase))))throw new InvalidDataException("Affected installed model has no supported prebuilt project: "+string.Join(';',targets.Where(x=>!candidates.Any(c=>c.Target.Equals(x,StringComparison.OrdinalIgnoreCase)))));
         List<LeanBodyProject> projects=[];HashSet<string> definitions=new(StringComparer.OrdinalIgnoreCase),inputs=new(StringComparer.OrdinalIgnoreCase);
         foreach(var selectedEntry in selected){string name=selectedEntry.Key;var entry=selectedEntry.Value;var set=entry.Set;
             string outputFile=set.Element("OutputFile")?.Value??throw new InvalidDataException("Required project OutputFile absent: "+name),outputPath=Ref((set.Element("OutputPath")?.Value??"").TrimEnd('\\','/'));if(!outputPath.StartsWith("meshes/",StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("Project output outside meshes: "+name);
@@ -89,14 +113,16 @@ public static class LeanBodyInputs
             foreach(string reference in refs.Distinct(StringComparer.OrdinalIgnoreCase))if(inputs.Add(reference))sources.Stage(reference,"required prebuilt source/diff "+name,pending,followDependencies:false);
             projects.Add(new(name,entry.Ref,installed,matches[0],relocate,refs.Distinct(StringComparer.OrdinalIgnoreCase).ToArray()));
         }
-        var tool=sources.Stage(root+"BodySlide x64.exe","isolated required prebuilt generator",pending,followDependencies:false);string? toolVersion=FileVersionInfo.GetVersionInfo(tool.Backing).FileVersion;
-        // 5.7.1 constructs its hidden frame even for -gbuild. Stage only
-        // its four startup XRCs and their named image dependencies, not res/**.
+        string toolReference=ResolveToolReference(sources);
+        var tool=sources.Stage(toolReference,"isolated required prebuilt generator",pending,followDependencies:false);string? toolVersion=FileVersionInfo.GetVersionInfo(tool.Backing).FileVersion;
+        // Both verified releases initialize a hidden frame for command builds.
+        // Stage four startup XRCs, named images and the optional direct image.
         HashSet<string> resources=new(StringComparer.OrdinalIgnoreCase),images=new(StringComparer.OrdinalIgnoreCase){root+"res/images/BodySlide.png"};
-        foreach(string name in new[]{"BodySlide","BatchBuild","Settings","About"}){string reference=root+"res/xrc/"+name+".xrc";byte[] raw=[];sources.Stage(reference,"BodySlide5.7.1 headless startup XRC",pending,followDependencies:false,consume:b=>raw=b);resources.Add(reference);using var stream=new MemoryStream(raw,false);var document=XDocument.Load(stream);foreach(var image in document.Descendants().Where(x=>x.Name.LocalName is "bitmap" or "bitmap2")){string value=image.Value.Replace('\\','/');if(value.Length==0)continue;if(value.StartsWith("$(AppDir)/",StringComparison.Ordinal))value=value[10..];if(!value.StartsWith("res/",StringComparison.Ordinal))throw new InvalidDataException("Required tool XRC image path unsupported: "+value);images.Add(Ref(root+value));}}
-        foreach(string reference in images){sources.Stage(reference,"BodySlide5.7.1 named startup image",pending,followDependencies:false);resources.Add(reference);}
+        foreach(string name in new[]{"BodySlide","BatchBuild","Settings","About"}){string reference=root+"res/xrc/"+name+".xrc";byte[] raw=[];sources.Stage(reference,"BodySlide headless startup XRC",pending,followDependencies:false,consume:b=>raw=b);resources.Add(reference);using var stream=new MemoryStream(raw,false);var document=XDocument.Load(stream);foreach(var image in document.Descendants().Where(x=>x.Name.LocalName is "bitmap" or "bitmap2")){string value=image.Value.Replace('\\','/');if(value.Length==0)continue;if(value.StartsWith("$(AppDir)/",StringComparison.Ordinal))value=value[10..];if(!value.StartsWith("res/",StringComparison.Ordinal))throw new InvalidDataException("Required tool XRC image path unsupported: "+value);images.Add(Ref(root+value));}}
+        if(File.Exists(sources.Virtual(root+"res/images/PopOut.png")))images.Add(root+"res/images/PopOut.png");
+        foreach(string reference in images){sources.Stage(reference,"BodySlide named startup image",pending,followDependencies:false);resources.Add(reference);}
         sources.Stage(root+"BuildSelection.xml","authored project zap selections; D51 intact garment",pending,followDependencies:false);
         if(targets.Any(x=>projects.All(p=>!p.OutputTarget.Equals(x,StringComparison.OrdinalIgnoreCase))))throw new InvalidDataException("Affected installed model has no supported prebuilt project: "+string.Join(';',targets.Where(x=>projects.All(p=>!p.OutputTarget.Equals(x,StringComparison.OrdinalIgnoreCase)))));
-        return new(preset,request.PresetXml!,BoundedBinary.Digest(xml),xmlRef,projects.ToArray(),targets,"OBody4.4.3 ApplySliderSet/ApplyBodyMorphs; compatible installed shape/vertex ranges and assigned XML slider intersection establish each selected-sex skin/outfit target. Unaffected meshes remain as-is; runtime geometry is not decoded.",new{Skee=config,BodyMorphEnabled=true,DefaultUsed=enabled.Count==0,BodySlideVersion=toolVersion,VersionNotice="Verified tool evidence is limited to 5.7.1; other versions are permitted subject to concrete required startup/project/output format checks."},models,resources.Order().ToArray(),projectSelections.ToArray());
+        return new(preset,request.PresetXml!,BoundedBinary.Digest(xml),xmlRef,projects.ToArray(),targets,"OBody4.4.3 ApplySliderSet/ApplyBodyMorphs; compatible installed shape/vertex ranges and assigned XML slider intersection establish each selected-sex skin/outfit target. Unaffected meshes remain as-is; runtime geometry is not decoded.",new{Skee=config,BodyMorphEnabled=true,DefaultUsed=enabled.Count==0,BodySlideVersion=toolVersion,VersionNotice="Verified tool evidence covers bounded 5.7.1 and 5.9.1 body/outfit builds; other versions remain permitted subject to concrete required startup/project/output format checks."},models,resources.Order().ToArray(),projectSelections.ToArray(),toolReference);
     }
 }
