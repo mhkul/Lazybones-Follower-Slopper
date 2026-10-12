@@ -78,10 +78,11 @@ and access to `Lazybones-Follower-Slopper-0.1.1-thirdparty-source.zip`, the sepa
 dependency-source release asset containing full notices and exact binary/revision
 correspondence indexes. This repository does not replace that companion.
 Published upstream binaries were not independently rebuilt. Download matching
-[application source](https://github.com/mhkul/Lazybones-Follower-Slopper/releases/download/v0.1.1/Lazybones-Follower-Slopper-0.1.1-source.zip),
+[application source at v0.1.1](https://github.com/mhkul/Lazybones-Follower-Slopper/tree/v0.1.1/src) or its [tagged repository ZIP](https://github.com/mhkul/Lazybones-Follower-Slopper/archive/refs/tags/v0.1.1.zip),
 [dependency source](https://github.com/mhkul/Lazybones-Follower-Slopper/releases/download/v0.1.1/Lazybones-Follower-Slopper-0.1.1-thirdparty-source.zip)
-and [checksums](https://github.com/mhkul/Lazybones-Follower-Slopper/releases/download/v0.1.1/SHA256SUMS.txt)
-from the same release.
+and [checksums in the release notes](https://github.com/mhkul/Lazybones-Follower-Slopper/releases/tag/v0.1.1)
+from the same release. The Windows ZIP already includes buildable `src/`;
+the dependency-source ZIP is for rebuilding or redistribution and is not needed to run the app.
 
 For binary redistribution, preserve the [Python native component metadata](src/dependencies/python-native-components.json).
 The v0.1.1 dependency-source
