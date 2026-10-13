@@ -1,12 +1,13 @@
 using System.Drawing;
 using System.Text.Json;
+using Mutagen.Bethesda;
 using Mutagen.Bethesda.Skyrim;
 
 // A RaceMenu array index identifies a player tint entry. NPC TINI instead
 // identifies the selected race's tint asset; arbitrary RGB needs no TIAS palette.
 static class CapturedSkinTint
 {
- public static TintLayer Resolve(IRaceGetter race,bool female,JsonElement tint)
+ public static TintAssets Asset(IRaceGetter race,bool female,JsonElement tint)
  {
   if(tint.GetProperty("index").GetInt32()!=0)throw new InvalidDataException("Captured skin tint must be RaceMenu skin entry 0");
   string Norm(string path){path=AutoFollower.VirtualPath.Normalize(path);return path.StartsWith("textures/",StringComparison.OrdinalIgnoreCase)?path[9..]:path;}
@@ -16,6 +17,11 @@ static class CapturedSkinTint
   if(matches.Length!=1||!matches[0].Index.HasValue)throw new InvalidDataException("Captured existing race has no unique matching skin-tone tint asset for the exported custom color: "+texture);
   ushort index=matches[0].Index!.Value;
   if(masks!.Count(x=>x.Index==index)!=1)throw new InvalidDataException("Captured existing race skin-tone tint asset index is ambiguous");
+  return matches[0].DeepCopy();
+ }
+ public static TintLayer Resolve(IRaceGetter race,bool female,JsonElement tint)
+ {
+  ushort index=Asset(race,female,tint).Index!.Value;
   uint color=tint.GetProperty("color").GetUInt32();
   // NPC TINV is a whole percentage. Use its nearest representable opacity;
   // keep RGB exact and omit TIAS so initialization cannot replace it by a preset.

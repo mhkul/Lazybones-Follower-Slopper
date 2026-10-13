@@ -22,6 +22,7 @@ QUALITY_ERRORS = (ValueError, struct.error, ET.ParseError, FileNotFoundError,
 MESSAGES = {
     'input-quality': 'Some selected inputs are incomplete or disagree. Available source content is preserved; appearance or behavior may differ.',
     'prebuilt-fallback': 'The requested preset bake was not completed for all targets. Available captured installed meshes are used for those targets; their shape may differ and OBody may be needed.',
+    'prebuilt-native-exit': 'BodySlide exited abnormally after writing independently verified preset meshes. Those meshes are used; the process failure remains recorded and in-game appearance is unverified.',
     'prebuilt-quality': 'Written BodySlide meshes failed an independent quality check. They are preserved with this failed assessment; their shape or coverage may be wrong.',
     'head-quality': 'A head quality or appearance check failed. Available exported content is preserved; face, expressions or physics may differ.',
     'asset-quality': 'An asset or skeleton quality check failed. Available installed content and safe references are preserved; appearance or physics may differ.',

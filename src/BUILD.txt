@@ -1,4 +1,4 @@
-Lazybones Follower Slopper 0.1.3 build
+Lazybones Follower Slopper 0.1.4 build
 
 Extract the main archive and work inside its src folder. Developer prerequisites:
 Windows x64, PowerShell, .NET SDK 8.0.422, Python 3.12+ for packaging, and
@@ -23,7 +23,7 @@ Upstream builds have their own prerequisites. Mutagen's upstream PreBuild
 deletes cache folders: use an isolated profile/cache for upstream builds.
 
 The Python native component metadata is in
-dependencies/python-native-components.json. The matching v0.1.3 thirdparty-source
+dependencies/python-native-components.json. The matching v0.1.4 thirdparty-source
 ZIP includes ctypes/libffi source, updated binary/component indexes and full
 notices alongside the existing dependency sources. Preserve that complete
 companion when redistributing application binaries.

@@ -26,7 +26,7 @@ winning installed meshes and compatible morph files with private-reference edits
 XML-driven Prebuilt applies only to actual affected meshes. Runtime morphs are
 diagnostics. Preserve FaceGen, tint, physics and follower/placement semantics.
 Use the originating cell plugin without unrelated winner fields. Existing race
-packages no skeleton; private race maintains supported private compatibility.
+packages no actor race skeleton; preserve required skin/equipment/SMP models regardless of filename; private race maintains supported private compatibility.
 Discard identified cached Heels Fix lift while preserving footwear metadata.
 Body overlays remain deferred; IED is entirely excluded. Package scoped RSV/PDA
 configuration, not custom DLL/PEX adapters or developer helpers.

@@ -5,7 +5,12 @@ from inventory import P,pin,verify
 from prepare_build import NAMES
 from nif_detail import Reader,detail
 
-def f32(v):return struct.unpack('<f',struct.pack('<f',v))[0]
+def f32(v):
+ if not math.isfinite(v):raise ValueError('Non-finite geometry arithmetic')
+ try:rounded=struct.unpack('<f',struct.pack('<f',v))[0]
+ except OverflowError as error:raise ValueError('Geometry arithmetic exceeds finite float32 range') from error
+ if not math.isfinite(rounded):raise ValueError('Non-finite float32 geometry result')
+ return rounded
 def truth(e,key):return e.get(key)=='true'
 def native_path(s):return Path(s.replace('\\','/'))
 
@@ -61,9 +66,19 @@ def defaults(project,values,choices):
      for e in ('small','big'):defs[toggle][e]=100-defs[toggle][e]
  return defs
 
+def finite_vectors(vectors):
+ if any(not math.isfinite(v) for row in vectors for v in row):raise ValueError('Non-finite geometry or UV coordinate')
+
 def metrics(expected,actual):
- assert len(expected)==len(actual);d=[math.dist(a,b) for a,b in zip(expected,actual)]
- return dict(vertices=len(d),maximum=max(d,default=0),rms=math.sqrt(sum(v*v for v in d)/len(d)) if d else 0)
+ assert len(expected)==len(actual)
+ finite_vectors(expected);finite_vectors(actual)
+ d=[math.dist(a,b) for a,b in zip(expected,actual)]
+ if any(not math.isfinite(v) for v in d):raise ValueError('Non-finite geometry comparison distance')
+ squared=sum(v*v for v in d)
+ if not math.isfinite(squared):raise ValueError('Non-finite geometry comparison sum')
+ maximum=max(d,default=0);rms=math.sqrt(squared/len(d)) if d else 0
+ if not math.isfinite(maximum) or not math.isfinite(rms):raise ValueError('Non-finite geometry comparison metric')
+ return dict(vertices=len(d),maximum=maximum,rms=rms)
 
 def shader_raw(d,s):
  result=[]

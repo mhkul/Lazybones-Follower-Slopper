@@ -1,4 +1,4 @@
-# Lazybones Follower Slopper 0.1.3: agent guide
+# Lazybones Follower Slopper 0.1.4: agent guide
 
 The Windows x64 application builds a follower ZIP from a selected Skyrim save
 and matching finished RaceMenu export. Operate its WinForms GUI. There is no
@@ -43,7 +43,7 @@ checks still apply and do not establish universal compatibility.
    curated spell/perk packages and optional marriage. Marriage starts unchecked;
    blank Maximum imposes no user cap. Hover or F1 provides help. Advanced Race
    defaults to a new private custom race. Existing captured race retains its
-   provider's behavior/dependency and packages no skeleton. Respect the shown
+   provider's behavior/dependency and packages no actor race skeleton. Required skin/equipment/SMP models remain included even when their filenames contain skeleton. Respect the shown
    dependency/compatibility consequences.
 3. Advanced Equipment / `Choose items…` includes mesh-bearing armor, weapons and ammunition by default.
    Omissions apply to every chosen output, preserve shared inputs and persist
@@ -219,7 +219,7 @@ not public source. Editable code is in Gui/Foundation/Writer, Python stages
 in Stages, packagers in tools, and portrait/ICO in `assets/branding/icon-v2`.
 
 Keep `src/LICENSES.txt` and matching dependency-source access when redistributing.
-`Lazybones-Follower-Slopper-0.1.3-thirdparty-source.zip` contains dependency
+`Lazybones-Follower-Slopper-0.1.4-thirdparty-source.zip` contains dependency
 sources, full notices and binary/revision correspondence indexes. Published
 upstream binaries were not independently rebuilt; their own prerequisites
 apply. Mutagen upstream PreBuild deletes cache folders: use an isolated
@@ -227,7 +227,7 @@ upstream profile/cache. This guide adds no public release-packaging command
 or unattended follower-build interface.
 
 The Python native component metadata is in
-dependencies/python-native-components.json. The matching v0.1.3 thirdparty-source
+dependencies/python-native-components.json. The matching v0.1.4 thirdparty-source
 ZIP includes ctypes/libffi source, updated binary/component indexes and full
 notices alongside the existing dependency sources. Preserve that complete
 companion when redistributing application binaries.
@@ -237,3 +237,9 @@ partial requested outputs or unresolved quality findings. Review Build details
 and the generated install instructions: warnings may mean appearance or gameplay
 defects, unavailable preset baking or assignment, or a plugin that cannot load.
 Failed checks remain failed; warnings do not establish in-game success.
+
+Existing-race builds keep the installed actor skeleton while preserving legitimate
+skin, equipment and SMP mesh references. Custom races preserve captured skin tint
+inputs. After a BodySlide failure, a fresh mesh pair is used only when independent
+preset geometry checks pass; otherwise captured meshes remain a warned fallback.
+Reporter-specific colour differences and native crash causes remain unconfirmed.

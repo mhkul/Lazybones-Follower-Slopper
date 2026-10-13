@@ -139,6 +139,18 @@ class Build:
         fallback=dict(passed=False,checksComplete=False,retainedReferences=[r['reference'] for r in external],missingReferences=list(self.missing.values()),completeReferenceClosure=False,runtimeVerified=False)
         return self.quality('package-quality', variant, lambda: validate_members(data,self.plugin,self.uuid,variant,hosts,external,external_data,require_compatibility=True,missing_references=list(self.missing.values()),best_effort=True), fallback)
 
+    def existing_skeleton_assessment(self, data):
+        # A skin-addon or SMP model can legitimately be named "skeleton".
+        # Only the selected actor RACE skeletal model has the installed-only role.
+        sources=[s for s in self.plan['sources'] if s['consumer']=='winning selected-sex race skeleton']
+        if len(sources)!=1:
+            return dict(passed=False,finding='Selected actor skeleton role is unavailable or ambiguous; installed race remains required')
+        ref=norm(sources[0]['reference']);choice=self.choices.get(ref,{})
+        packaged=[a['destination'] for a in self.assets if norm(a['assetReference'])==ref and a.get('output') and a['destination'] in data]
+        passed=choice.get('mode')=='Retain dependency' and not packaged
+        return dict(passed=passed,role='selected actor RACE skeletal model',installedOnly=True,packagedActorSkeletons=packaged,
+                    finding=None if passed else 'Selected actor skeleton was not retained exclusively; failed installed-only assessment, no runtime correctness claimed')
+
     def captured_preset(self):
         body=self.plan['body']
         if body is None or self.preset is not None: return
@@ -356,23 +368,47 @@ class Build:
             if len(str(native_dest / ('meshes/p'+str(i)))) >= 248 or len(str(native_dest / ('meshes/p'+str(i)+'/mesh_1.nif'))) >= 260:
                 raise ValueError('BodySlide build work path unsupported: generated mesh path exceeds the native path limit. Set OutputRoot in application.json to a writable short ASCII folder, then retry.')
             try:
-                self.run([Path(native_tool) / tool_exe.name, '-gbuild', 'T09G-'+str(i), '-p', body['assignedPreset'], '-t', str(native_dest)+'\\'], Path(native_tool), 'prebuilt-'+str(i))
-                log=self.read(native_log).decode('utf-8',errors='replace')
-                if not any(marker in log for marker in ('All group build sets processed successfully!', 'All command-line build sets processed successfully!')):
+                native_failure=None
+                try: self.run([Path(native_tool) / tool_exe.name, '-gbuild', 'T09G-'+str(i), '-p', body['assignedPreset'], '-t', str(native_dest)+'\\'], Path(native_tool), 'prebuilt-'+str(i))
+                except StageFailed as error: native_failure=error
+                log=self.read(native_log).decode('utf-8',errors='replace') if native_log.is_file() else ''
+                if native_failure is None and not any(marker in log for marker in ('All group build sets processed successfully!', 'All command-line build sets processed successfully!')):
                     self.warn('prebuilt-quality','prebuilt-'+str(i),'BodySlide success receipt absent; only actually written readable outputs can be used')
-                generated=sorted(dest.rglob('*.nif'))
-                if len(generated)!=2: raise ValueError('No complete readable prebuilt weight pair')
-                for path in generated: Nif(self.read(path))
+                generated,rows=self.prebuilt_outputs(row,project_roots[row['name']],project,dest,values,filtered,i,native_failure)
                 for endpoint,path in enumerate(generated):
                     ref=norm(row['outputTarget']);self.prebuilt[ref[:-6]+'_'+str(endpoint)+'.nif']=path
                 if list(dest.rglob('*.tri')): self.warn('prebuilt-quality','prebuilt-'+str(i),'Unexpected runtime TRI was generated; captured compatible morph inputs are preserved where called')
-                rows=self.quality('prebuilt-quality','geometry-'+str(i),lambda:self.validate_prebuilt(row,project_roots[row['name']],project,generated,values,filtered),[])
+                if native_failure is not None:
+                    self.warn('prebuilt-native-exit','prebuilt-'+str(i),native_failure)
+                    validation.append(dict(project=row['name'],nativeExitCode=native_failure.exit_code,processPassed=False,presetBaked=True,independentGeometryPassed=True))
                 validation.extend(rows)
             except (*QUALITY_ERRORS, FileNotFoundError) as error:
-                self.warn('prebuilt-fallback','prebuilt-'+str(i),error)
-                validation.append(dict(project=row['name'],passed=False,presetBaked=False,installedFallback=True,error=str(error)))
+                detail=str(native_failure)+'; '+str(error) if native_failure is not None else str(error)
+                self.warn('prebuilt-fallback','prebuilt-'+str(i),detail)
+                failed=dict(project=row['name'],passed=False,presetBaked=False,installedFallback=True,error=str(error))
+                if native_failure is not None:failed.update(nativeExitCode=native_failure.exit_code,processPassed=False,independentGeometryPassed=False)
+                validation.append(failed)
         self.dump(base / 'body-result.json', dict(projects=body['projects'], prebuiltPairs=len(self.prebuilt)//2, authoredValuesPreserved=len(values), defaults=self.preset['defaults'], garmentChoice=dict(zap='Remove Lower Torso Armor', choice=False, authority='D51'), validation=validation, inputRelocations=relocations, obodyGeometryGenerated=False))
         self.dump(self.root/'body-work.json', dict(route='XML-prebuilt', bodySlideInvoked=True, projectsBuilt=len(self.prebuilt)//2, selectedVariants=self.variants))
+
+    def prebuilt_outputs(self, row, node, project, dest, values, choices, index, native_failure=None):
+        # dest is created fresh for this invocation. Require the exact requested
+        # pair, never a log marker, a previous job or two arbitrary NIF names.
+        generated=[dest/'meshes'/('p'+str(index))/('mesh_'+str(endpoint)+'.nif') for endpoint in (0,1)]
+        if set(dest.rglob('*.nif'))!=set(generated): raise ValueError('No exact complete prebuilt weight pair')
+        for path in generated: Nif(self.read(path))
+        def operation():
+            try: return self.validate_prebuilt(row,node,project,generated,values,choices)
+            except AssertionError as error: raise ValueError('Independent BodySlide geometry proof failed') from error
+        if native_failure is None:
+            rows=self.quality('prebuilt-quality','geometry-'+str(index),operation,[])
+        else:
+            # Abnormal termination does not prove output failure, but readable
+            # NIFs alone are insufficient. Admit only a complete XML proof.
+            rows=operation()
+            if {r.get('endpoint') for r in rows if 'vertices' in r}!={'small','big'}:
+                raise ValueError('Abnormal BodySlide exit has no complete independent preset geometry proof')
+        return generated,rows
 
     def validate_prebuilt(self, row, node, project, generated, values, choices):
         # Independent OSD/XML simulation validates authored values and the
@@ -382,9 +418,15 @@ class Build:
         shapes = {s['name']: s for s in src['shapes']}; shape_map = {s.text: s.get('target') for s in node.findall('Shape')}
         picked = {x.get('zap'): x.get('choice') == 'true' for x in choices if x.get('project') == row['name']}
         defs = defaults(node, values, picked); rows = []
+        if any(not math.isfinite(v) for v in values.values()) or any(not math.isfinite(v) for endpoints in defs.values() for v in endpoints.values()):
+            raise ValueError('Non-finite independent preset coefficient/default')
+        for shape in src['shapes']:
+            geometry.finite_vectors(shape['vertices']);geometry.finite_vectors(shape['uvs'])
         datasets = {name: {s.get('name'): data_for(node, s, target, project) for s in node.findall('Slider')} for name, target in shape_map.items()}
         for endpoint, path in zip(('small', 'big'), generated):
             actual = detail(path); self.read_files.add(str(path)); self.read_bytes += path.stat().st_size * 2
+            for shape in actual['shapes']:
+                geometry.finite_vectors(shape['vertices']);geometry.finite_vectors(shape['uvs'])
             target_shapes = {s['name']: s for s in actual['shapes']}; expected_names = set()
             for name, target in shape_map.items():
                 if name not in shapes:
@@ -417,7 +459,8 @@ class Build:
                 if error['maximum'] >= .0002: raise ValueError('Fresh XML geometry differs: ' + row['name'] + '/' + name)
                 mapping = {old: new for new, old in enumerate(keep)}; faces = [tuple(mapping[i] for i in t) for t in s['faces'] if all(i in mapping for i in t)]
                 if faces != g['faces'] or s['bones'] != g['bones'] or s['transform'] != g['transform']: raise ValueError('Fresh source topology/skin binding differs')
-                quantized_uvs = [tuple(struct.unpack('<e',struct.pack('<e',v))[0] for v in uvs[i]) for i in keep]
+                try:quantized_uvs = [tuple(struct.unpack('<e',struct.pack('<e',v))[0] for v in uvs[i]) for i in keep]
+                except OverflowError as error:raise ValueError('Independent UV result exceeds finite half-float range') from error
                 uv_error = metrics(quantized_uvs,g['uvs'])
                 if uv_error['maximum'] >= .001: raise ValueError('Fresh UV differs: ' + row['name'] + '/' + name)
                 if shader_signature(src,s) != shader_signature(actual,g): raise ValueError('Fresh shader differs: ' + row['name'] + '/' + name)
@@ -606,10 +649,12 @@ class Build:
             for row in external:
                 s=row['authority']; declaration+='Retain '+row['reference']+' from '+s['backing']+((' :: '+s['archiveMember']) if s.get('archiveMember') else '')+'; SHA256 '+s['sha256']+(('; '+s['activation']) if s.get('activation') else '')+'\n'
             race_mode=self.plan.get('followerSettings',{}).get('values',{}).get('raceMode','private')
-            declaration+='Race: '+('Use existing captured race '+self.plan['savedActor']['race']+'; installed race/skeleton provider required; no skeleton packaged.' if race_mode=='existing' else 'Generate new custom race; owned links remapped. Independent required masters remain as listed.')+'\n'
+            declaration+='Race: '+('Use existing captured race '+self.plan['savedActor']['race']+'; installed actor race/skeleton provider required; no actor race skeleton packaged. Skin, equipment and SMP models keep their own roles regardless of filename.' if race_mode=='existing' else 'Generate new custom race; owned links remapped. Independent required masters remain as listed.')+'\n'
             for dependency in sorted({ (d['master'],d['target'],d['reason']) for d in plugin_validation['requiredMasterReasons'] }):
                 declaration+='Required '+dependency[0]+' :: '+dependency[1]+' — '+dependency[2]+'\n'
-            if race_mode=='existing' and any(name.lower().endswith('.nif') and 'skeleton' in Path(name).name.lower() for name in data):raise ValueError('Existing race output contains a skeleton NIF')
+            if race_mode=='existing':
+                skeleton_policy=self.existing_skeleton_assessment(data)
+                if not skeleton_policy['passed']: self.warn('asset-quality','existing-race-skeleton',skeleton_policy['finding'])
             data['README-T08.txt']+=declaration.encode()
             target=self.plan['savedActor']['placement']
             data['README-T08.txt']+=('Saved destination: '+target['cell']+'; worldspace '+str(target['worldspace'])+'; position '+str(target['position'])+'; rotation radians '+str(target['rotation'])+'; in-game accessibility/persistence unverified.\n').encode()

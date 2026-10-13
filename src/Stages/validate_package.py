@@ -116,6 +116,12 @@ def validate_members(data,plugin,uuid,variant,host_resources=(),retained=(),reta
             origin=f"{rec['tag']} {rec['id']:08X}.{tag}"
             if rec['tag']=='TXST' and re.fullmatch(r'TX\d\d',tag):
                 require(origin,value.rstrip(b'\0').decode(),'textures')
+            elif rec['tag']=='RACE' and tag=='TINT':
+                # RACE SkinTone assets contain a NUL-terminated texture path,
+                # followed by mask metadata. Close the actual emitted path.
+                texture,separator,_=value.partition(b'\0')
+                if not separator: raise ValueError('Malformed RACE tint texture field')
+                if texture: require(origin,texture.decode(),'textures')
             elif rec['tag']=='SNDR' and tag=='ANAM':
                 sound=value.rstrip(b'\0').decode().replace('\\','/')
                 if sound.lower().startswith('data/'):sound=sound[5:]

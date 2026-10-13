@@ -235,9 +235,16 @@ static class Generate {
   if(skeletal==null||skeletal.File.IsNull)throw new Exception("Selected-sex skeleton unavailable: "+selectedRace);
   if(!existingRace)skeletal.File=ResolveAsset(skeletal.File.GivenPath,"meshes");
   if(lean){if(female)race.SkeletalModel!.Male=null;else race.SkeletalModel!.Female=null;}
-  // A fixed captured NPC never uses character-generation option lists; isolate their private defaults.
+  TintAssets? capturedSkinAsset=null;
+  if(lean)try{capturedSkinAsset=CapturedSkinTint.Asset((IRaceGetter)Source(selectedRace),female,plan.GetProperty("appearance").GetProperty("tintLighting"));}
+  catch(InvalidDataException e)when(bestEffort){buildWarnings.Add(BestEffortBuild.Finding("skin-tint",e.Message,"plugin-quality","The captured custom skin tint could not be bound to a unique selected race asset. Captured texture-lighting RGB and FaceGen are preserved; body colour may differ."));}
+  // A fixed captured NPC never uses option lists. Its custom skin layer still
+  // needs the selected sex's matching SkinTone asset in the private race.
   foreach(var hd in new[]{race.HeadData?.Male,race.HeadData?.Female})if(hd!=null) {
-   hd.HeadParts.Clear();hd.RacePresets.Clear();hd.AvailableHairColors.Clear();hd.FaceDetails.Clear();hd.AvailableMorphs=null;hd.TintMasks.Clear();hd.Model=null;hd.DefaultFaceTexture.SetTo(New(0x807));
+   bool selectedHead=ReferenceEquals(hd,female?race.HeadData?.Female:race.HeadData?.Male);
+   hd.HeadParts.Clear();hd.RacePresets.Clear();hd.AvailableHairColors.Clear();hd.FaceDetails.Clear();hd.AvailableMorphs=null;hd.TintMasks.Clear();
+   if(!existingRace&&selectedHead&&capturedSkinAsset!=null){capturedSkinAsset.FileName=ResolveAsset(capturedSkinAsset.FileName!.GivenPath,"textures");hd.TintMasks.Add(capturedSkinAsset);}
+   hd.Model=null;hd.DefaultFaceTexture.SetTo(New(0x807));
   }
   notes.Add(existingRace?"Captured existing race is referenced without a RACE override; its installed skeleton provider is required.":"Private race preserves selected winning behavior/attacks/keywords and ArmorRace/MorphRace semantics, remapping source-race links to the private race. Null compatibility fields remain null. Unused generation choices are omitted for the fixed NPC.");
   var j=lean?plan.GetProperty("appearance"):JsonDocument.Parse(File.ReadAllText(m.GetProperty("faceGen").GetProperty("sourceProvenance").GetProperty("appearancePreset").GetProperty("path").GetString()!)).RootElement;
@@ -261,7 +268,7 @@ static class Generate {
   var morphNames=new[]{"NoseLongVsShort","NoseUpVsDown","JawUpVsDown","JawNarrowVsWide","JawForwardVsBack","CheeksUpVsDown","CheeksForwardVsBack","EyesUpVsDown","EyesInVsOut","BrowsUpVsDown","BrowsInVsOut","BrowsForwardVsBack","LipsUpVsDown","LipsInVsOut","ChinNarrowVsWide","ChinUpVsDown","ChinUnderbiteVsOverbite","EyesForwardVsBack","Unknown"};
   for(int i=0;i<morphNames.Length;i++)typeof(NpcFaceMorph).GetProperty(morphNames[i])!.SetValue(npc.FaceMorph,mf[i]);
   var presets=defaults.GetProperty("presets").EnumerateArray().Select(v=>v.GetUInt32()).ToArray();npc.FaceParts=new NpcFaceParts{Nose=presets[0],Unknown=presets[1],Eyes=presets[2],Mouth=presets[3]};npc.TextureLighting=Color.FromArgb(unchecked((int)(lean?j.GetProperty("tintLighting"):j.GetProperty("tintInfo")[0]).GetProperty("color").GetUInt32()));
-  if(existingRace){npc.TintLayers.Add(CapturedSkinTint.Resolve((IRaceGetter)Source(selectedRace),female,j.GetProperty("tintLighting")));notes.Add("Follower-owned captured custom skin RGB/opacity binds to the original race skin-tone asset; no palette substitution or shared RACE override. NPC opacity uses native whole-percent precision.");}
+  if(lean&&capturedSkinAsset!=null){npc.TintLayers.Add(CapturedSkinTint.Resolve((IRaceGetter)Source(selectedRace),female,j.GetProperty("tintLighting")));notes.Add("Follower-owned captured custom skin RGB/opacity binds to the selected race skin-tone asset in both race modes; private race retains that selected-sex asset. No palette substitution or shared RACE override. NPC opacity uses native whole-percent precision; runtime colour match remains unverified.");}
   var skin=new Armor(New(0x803),SkyrimRelease.SkyrimSE){EditorID="AF_SenSkin",Name="Sen private skin",BodyTemplate=new BodyTemplate{FirstPersonFlags=(BipedObjectFlag)0x8C},Race=new FormLinkNullable<IRaceGetter>(race.FormKey)};
   if(lean){var input=plan.GetProperty("skin");skin.DeepCopyIn((IArmorGetter)Source(Canonical(input.GetProperty("originalSkin").GetString()!)));skin.EditorID="AF_SenSkin";skin.Name="Sen private skin";skin.Race.SetTo(race.FormKey);skin.Armature.Clear();foreach(var addon in input.GetProperty("addons").EnumerateArray())skin.Armature.Add(new FormLink<IArmorAddonGetter>(Clone(Canonical(addon.GetString()!))));notes.Add("Lean ordinary skin and applicable addons copied from selected record winners, retaining source flags. "+input.GetProperty("runtimeAssignmentOmission").GetString());}
   else{foreach(var id in new uint[]{0x19386,0x1938C,0x1938D}) {

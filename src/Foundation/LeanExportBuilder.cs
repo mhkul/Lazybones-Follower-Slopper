@@ -190,6 +190,11 @@ public static class LeanExportBuilder
                 bool extra=(flags[0][0]&8)!=0;if(exportedIndices.Contains(i)==extra)qualityWarnings.Add(BestEffortBuild.Finding("head-coverage","JSlot primary/extra head coverage contradicts selected HDPT: "+record.Canonical));
             }
             foreach(var texture in appearance.FaceTextures.EnumerateArray())pending.Enqueue(("textures/"+texture.GetProperty("texture").GetString(),"JSlot consumed face texture"));
+            if(!LeanRacePolicy.IsExisting(followerSettings)){
+                string skinTintTexture=VirtualPath.Normalize(appearance.TintLighting.GetProperty("texture").GetString()!);
+                if(!skinTintTexture.StartsWith("textures/",StringComparison.OrdinalIgnoreCase))skinTintTexture="textures/"+skinTintTexture;
+                pending.Enqueue((skinTintTexture,"captured private-race skin-tone tint asset"));
+            }
             var equipmentCatalog=LeanEquipmentChoices.Catalog(saved.Actor,index);
             var excludedEquipment=LeanEquipmentChoices.Exclusions(equipmentCatalog,request.ExcludedEquipment);
             LeanEquipmentOmission[] equipmentOmissions=equipmentCatalog.Where(c=>excludedEquipment.Contains(c.Canonical)).Select(c=>new LeanEquipmentOmission(c.Canonical,c.Name,[],"Voluntarily omitted equipment "+c.Name+" ("+c.Canonical+"). Its exclusive output inputs and links are excluded.")).ToArray();

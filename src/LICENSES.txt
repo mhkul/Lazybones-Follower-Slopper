@@ -1,6 +1,6 @@
-Lazybones Follower Slopper 0.1.3 â€” complete license/notice appendix
+Lazybones Follower Slopper 0.1.4 â€” complete license/notice appendix
 Original labeled texts below are included in full. References within historical summaries to upstream-notices/ denote the labeled sections here.
-Application source is in the main archive src/. Matching dependency sources and correspondence indexes are in Lazybones-Follower-Slopper-0.1.3-thirdparty-source.zip.
+Application source is in the main archive src/. Matching dependency sources and correspondence indexes are in Lazybones-Follower-Slopper-0.1.4-thirdparty-source.zip.
 
 
 ===== BEGIN COPYING-GPL-3.0.txt =====

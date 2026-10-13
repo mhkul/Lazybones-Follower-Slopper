@@ -66,7 +66,7 @@ def _recipient_readme(package, variant, plugin, preset_name):
         lines.extend('Unavailable requested variant: '+row['stage']+'.' for row in package['buildWarnings'] if row.get('category')=='variant-unavailable' and row.get('stage') in ('prebuilt','obody','as-is'))
     mode=(package.get('followerSettings') or {}).get('values',{}).get('raceMode','private')
     if mode=='existing':
-        lines.append('Race: Use existing captured race; its installed race plugin and skeleton provider are required; no skeleton packaged.')
+        lines.append('Race: Use existing captured race; its installed race plugin and actor skeleton provider are required; no actor race skeleton packaged. Required skin/equipment/SMP models are preserved regardless of filename.')
     else:
         lines.append('Race: Generate new custom race; source-local abilities and supported linked effects are copied privately. Other required masters remain listed above.')
     reasons=(package.get('pluginValidation') or {}).get('requiredMasterReasons',[])

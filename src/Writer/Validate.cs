@@ -119,8 +119,19 @@ static class Validate {
     foreach(var input in source.Races)Check(raceInputs.TryAdd(input.FormKey,input.DeepCopy()),"Duplicate captured winning race "+input.FormKey);
    }
    var original=raceInputs[selectedRace];
-   if(existingRace){var expectedTint=CapturedSkinTint.Resolve(original,female,planData.GetProperty("appearance").GetProperty("tintLighting"));Check(npc.TintLayers.Count==1,"Existing-race NPC custom skin layer missing");var tint=npc.TintLayers.Single();Check(tint.Index==expectedTint.Index&&tint.Color==expectedTint.Color&&tint.InterpolationValue==expectedTint.InterpolationValue&&!tint.Preset.HasValue,"Captured custom skin color/opacity was replaced or uses a race palette");}
-   else Check(npc.TintLayers.Count==0,"Private-race captured material behavior changed");
+   var expectedTint=CapturedSkinTint.Resolve(original,female,planData.GetProperty("appearance").GetProperty("tintLighting"));
+   Check(npc.TintLayers.Count==1,"NPC captured custom skin layer missing or duplicated");
+   if(npc.TintLayers.Count==1){var tint=npc.TintLayers.Single();Check(tint.Index==expectedTint.Index&&tint.Color==expectedTint.Color&&tint.InterpolationValue==expectedTint.InterpolationValue&&!tint.Preset.HasValue,"Captured custom skin color/opacity was replaced or uses a race palette");}
+   var expectedLighting=System.Drawing.Color.FromArgb(unchecked((int)planData.GetProperty("appearance").GetProperty("tintLighting").GetProperty("color").GetUInt32()));
+   Check(npc.TextureLighting is {} lighting&&lighting.R==expectedLighting.R&&lighting.G==expectedLighting.G&&lighting.B==expectedLighting.B,"Captured NPC texture-lighting RGB differs");
+   if(!existingRace){
+    var masks=(female?race.HeadData?.Female:race.HeadData?.Male)?.TintMasks;var asset=CapturedSkinTint.Asset(original,female,planData.GetProperty("appearance").GetProperty("tintLighting"));
+    string sourceTexture=AssetKey(asset.FileName!.GivenPath,"textures");
+    var tintAssets=manifestPath==null?[]:JsonDocument.Parse(File.ReadAllText(manifestPath)).RootElement.GetProperty("assets").EnumerateArray().Where(a=>AssetKey(a.GetProperty("assetReference").GetString()!,"textures")==sourceTexture).ToArray();
+    Check(tintAssets.Length==1||warnedMissing.Contains(sourceTexture),"Private-race skin-tone texture provider unavailable");
+    if(tintAssets.Length==1)asset.FileName=tintAssets[0].GetProperty("destination").GetString()![9..].Replace('/','\\');
+    Check(masks!=null&&masks.Count==1&&masks[0].Equals(asset),"Private-race selected-sex skin-tone asset was lost or altered");
+   }
    Check(original.Flags==race.Flags&&original.BodyTemplate?.FirstPersonFlags==race.BodyTemplate?.FirstPersonFlags&&original.BodyPartData.FormKey==race.BodyPartData.FormKey,"Selected winning race anatomy/flags were replaced");
    FormKey Remap(FormKey key)=>!existingRace&&key==selectedRace?outputRace:key;
    Check(armorRace==Remap(original.ArmorRace.FormKey)&&race.MorphRace.FormKey==Remap(original.MorphRace.FormKey),"Winning ArmorRace/MorphRace were replaced");
