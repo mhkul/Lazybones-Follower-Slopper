@@ -124,6 +124,12 @@ internal sealed class DiagnosticReport
                     foreach (var item in value.EnumerateObject())
                     {
                         if (IsFingerprint(item.Name)) continue;
+                        if (item.Name.Equals("validationFailure", StringComparison.OrdinalIgnoreCase))
+                        {
+                            // This protocol is projected as typed facts, never parsed as prose.
+                            if (AutoFollower.PluginValidationFailure.TryRead(item.Value, out var failure)) Validation(failure!);
+                            continue;
+                        }
                         if (item.Value.ValueKind == JsonValueKind.String && FixedField(item.Name, item.Value.GetString() ?? "") is { } fixedField)
                         { Add(fixedField, item.Value.GetString()!); continue; }
                         if (NumericKeys.FirstOrDefault(x => x.Equals(item.Name, StringComparison.OrdinalIgnoreCase)) is { } numeric && item.Value.ValueKind is JsonValueKind.Number or JsonValueKind.True or JsonValueKind.False)
@@ -139,6 +145,13 @@ internal sealed class DiagnosticReport
                 case JsonValueKind.String: Add(label, value.GetString() ?? ""); break;
                 // Unknown scalar fields cannot be diagnostic facts by default.
             }
+        }
+        private void Validation(AutoFollower.PluginValidationFailure failure)
+        {
+            Add("Validation category", "Unresolved emitted references");
+            Add("Validation summary", "count=" + failure.Count.ToString(System.Globalization.CultureInfo.InvariantCulture) + "; detailsTruncated=" + (failure.DetailsTruncated ? "true" : "false"));
+            foreach (var detail in failure.References)
+                Add("Validation reference", Alias(detail.SourceRecord,"Record") + " (" + detail.SourceRecordType + ") -> " + Alias(detail.TargetRecord,"Record") + " (" + detail.TargetRecordType + "); " + detail.TargetScope + "; " + Alias(detail.TargetPlugin,"Plugin"));
         }
         private static bool IsFingerprint(string name) => name.Contains("hash", StringComparison.OrdinalIgnoreCase) || name.Contains("digest", StringComparison.OrdinalIgnoreCase) || name.Contains("sha", StringComparison.OrdinalIgnoreCase) || name.Contains("fingerprint", StringComparison.OrdinalIgnoreCase) || name.Equals("inputPins", StringComparison.OrdinalIgnoreCase) || name.Equals("mvid", StringComparison.OrdinalIgnoreCase);
         private static string? FixedField(string key, string value)
@@ -216,7 +229,7 @@ internal sealed class DiagnosticReport
                 if (output.Length > Limit) { limited = true; break; }
                 var facts = new List<string>();
                 string raw = section.Raw;
-                if (section.Label is "Stage" or "Evidence state" or "Evidence kind" or "Crash classification" or "Aliased content")
+                if (section.Label is "Stage" or "Evidence state" or "Evidence kind" or "Crash classification" or "Aliased content" or "Validation category" or "Validation summary" or "Validation reference")
                 {
                     output.AppendLine(section.Label + ": " + raw);
                     continue;

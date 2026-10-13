@@ -59,11 +59,22 @@ internal static class StageFailureDiagnostics
             evidence.Add(Read(root, "package-stage.log", "Package output", true));
         }
         else evidence.Add(Read(root, "head-stage.log", "Private head output", true));
+        PluginValidationFailure? validationFailure = null;
+        if (childExit == 1 && stage.StartsWith("plugin-validation-", StringComparison.Ordinal))
+        {
+            try
+            {
+                var result = Read(root, stage + ".json", "Plugin validation", false);
+                using var doc = JsonDocument.Parse(result.Text);
+                if (doc.RootElement.TryGetProperty("validationFailure", out var detail) && PluginValidationFailure.TryRead(detail, out var parsed)) validationFailure = parsed;
+            }
+            catch (Exception e) when (e is JsonException or InvalidOperationException) { }
+        }
         string crash = childExit is { } child ? unchecked((uint)child) switch
         {
             0xC0000005 => "access violation", 0xC0000409 => "fast-fail termination (reason unavailable)", 0xC00000FD => "stack overflow", 0xC0000135 => "DLL not found", 0xC0000139 => "entry point not found", _ => "not classified"
         } : "child exit unavailable";
-        return JsonSerializer.Serialize(new { Stage = stage, PackageExitCode = exitCode, ExitCode = childExit, Crash = crash, Evidence = evidence }, Wire.Options);
+        return JsonSerializer.Serialize(new { Stage = stage, PackageExitCode = exitCode, ExitCode = childExit, Crash = crash, ValidationFailure = validationFailure, Evidence = evidence }, Wire.Options);
     }
     private static bool KnownStage(string name) => Regex.IsMatch(name, "^prebuilt-[0-9]{1,4}$|^plugin-(?:generation|validation)-(?:prebuilt|obody|as-is)$", RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(100));
     private static LogEvidence Read(string root, string relative, string kind, bool tail)

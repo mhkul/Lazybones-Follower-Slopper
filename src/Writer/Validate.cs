@@ -30,17 +30,32 @@ static class Validate {
   Check(locals.Select(r=>r.FormKey.ID).Order().SequenceEqual(registry.GetProperty("localIds").EnumerateArray().Select(e=>e.GetUInt32()).Order()),"Identity registry mismatch");}
   else{var plan=JsonDocument.Parse(File.ReadAllText(planPath)).RootElement;Check(locals.Select(r=>r.FormKey.ID).Distinct().Count()==locals.Length,"Duplicate lean local IDs");Check(plan.GetProperty("schema").GetString()=="lean-export-input-plan/v1"&&plan.GetProperty("gaps").GetArrayLength()==0,"Lean generation has unresolved inputs");}
   var paths=JsonDocument.Parse(File.ReadAllText(masterPaths)).RootElement.EnumerateObject().ToDictionary(p=>p.Name,p=>p.Value.GetString()!,StringComparer.OrdinalIgnoreCase);
-  var unresolved=new List<string>();var masterRecords=new Dictionary<ModKey,HashSet<FormKey>>();
+  var unresolved=new List<string>();var referenceDetails=new List<EmittedReferenceDetail>();var masterRecords=new Dictionary<ModKey,HashSet<FormKey>>();
   foreach(var master in mod.ModHeader.MasterReferences) {
    Check(paths.TryGetValue(master.Master.FileName.String,out var path)&&File.Exists(path),"Missing required master "+master.Master);
    using var src=SkyrimMod.CreateFromBinaryOverlay(path!,SkyrimRelease.SkyrimSE);
+   Check(src.ModKey==master.Master,"Required master identity differs: "+master.Master);
    masterRecords[master.Master]=src.EnumerateMajorRecords().Select(r=>r.FormKey).ToHashSet();
   }
   foreach(var rec in records.Values)foreach(var l in rec.EnumerateFormLinks().Where(l=>!l.FormKey.IsNull)) {
-   if(l.FormKey.ModKey==mod.ModKey){if(!records.ContainsKey(l.FormKey))unresolved.Add(rec.FormKey+" -> "+l.FormKey);}
-   else if(!masterRecords.TryGetValue(l.FormKey.ModKey,out var keys)||!keys.Contains(l.FormKey))unresolved.Add(rec.FormKey+" -> "+l.FormKey);
+   string? scope=null;
+   if(l.FormKey.ModKey==mod.ModKey){if(!records.ContainsKey(l.FormKey))scope="missing-local-record";}
+   else if(!masterRecords.TryGetValue(l.FormKey.ModKey,out var keys))scope="undeclared-master";
+   else if(!keys.Contains(l.FormKey)){
+    // Skyrim's PlayerRef (00000014) is supplied by the engine, not a master
+    // record. Accept only that exact declared-master key in an actor/reference
+    // compatible field; adjacent IDs, other plugins and other link types fail.
+    bool playerReference=l.FormKey==new FormKey(ModKey.FromFileName("Skyrim.esm"),0x14)&&l.Type.IsAssignableFrom(typeof(IPlacedNpcGetter));
+    if(!playerReference)scope="missing-master-record";
+   }
+   if(scope!=null){unresolved.Add(rec.FormKey+" -> "+l.FormKey);if(referenceDetails.Count<PluginValidationFailure.MaximumDetails)referenceDetails.Add(new(PluginValidationFailure.RecordType(rec.GetType()),PluginValidationFailure.RecordType(l.Type),scope,rec.FormKey.ToString(),l.FormKey.ToString(),l.FormKey.ModKey.FileName.String));}
   }
-  Check(unresolved.Count==0,"Unresolved emitted links: "+string.Join(',',unresolved));
+  if(unresolved.Count>0){
+   var failure=new PluginValidationFailure(PluginValidationFailure.Format,PluginValidationFailure.Unresolved,unresolved.Count,unresolved.Count>PluginValidationFailure.MaximumDetails,referenceDetails.ToArray());
+   // Optional diagnostics must not replace the owner's original rejection.
+   try{File.WriteAllText(output,JsonSerializer.Serialize(new{validationFailure=failure},Wire.Options));}catch(Exception e)when(e is IOException or UnauthorizedAccessException){}
+   Check(false,"Unresolved emitted links: "+string.Join(',',unresolved));
+  }
   bool existingRace=planPath!=null&&LeanRacePolicy.IsExisting(SettingsWriter.Resolve(planData));
   var npc=mod.Npcs.Single();IRaceGetter race;
   if(planPath!=null&&manifestPath!=null){

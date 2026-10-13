@@ -828,6 +828,7 @@ internal sealed class MainForm : Form
             int exitCode = await Task.Run(() => LeanExportBuilder.Run(_requestPath, _operationOutput, token,
                 chooseAssets: choices => ChooseAssets(choices, token), inputPreview: preview, chooseBodyProject: choice => ChooseBodyProject(choice, token), recoverEquipment: choice => RecoverEquipment(choice, token)), token);
             token.ThrowIfCancellationRequested();
+            _progressTimer.Stop();
             await FinalizeBuildAsync(exitCode);
         }
         catch (OperationCanceledException)
@@ -843,6 +844,7 @@ internal sealed class MainForm : Form
         }
         finally
         {
+            _progressTimer.Stop();
             _workDialog?.Complete(); _workDialog = null;
             if (File.Exists(Path.Combine(_operationOutput, "storage-owner.json")))
             {
@@ -1055,9 +1057,9 @@ internal sealed class MainForm : Form
         root.RowCount = 4; root.RowStyles.Clear();
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 93)); root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 30)); root.RowStyles.Add(new RowStyle(SizeType.Absolute, 86));
-        _operationHeader = Header("Follower build", "The finished install ZIP is saved to your chosen folder.");
+        _operationHeader = Header("Follower build", "Build status and diagnostic reports appear here. A ZIP is saved after a successful build.");
         root.Controls.Add(_operationHeader, 0, 0);
-        _operationStatus.Dock = DockStyle.Fill; _operationStatus.TextAlign = ContentAlignment.MiddleLeft; _operationStatus.AutoEllipsis = true;
+        _operationStatus.Dock = DockStyle.Top; _operationStatus.AutoSize = true; _operationStatus.TextAlign = ContentAlignment.TopLeft; _operationStatus.AutoEllipsis = false;
         var viewport = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
         var content = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, RowCount = 7, Padding = new Padding(0, 8, 0, 0) };
         content.RowStyles.Add(new RowStyle(SizeType.AutoSize)); content.RowStyles.Add(new RowStyle(SizeType.AutoSize)); content.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
@@ -1068,7 +1070,7 @@ internal sealed class MainForm : Form
         content.Controls.Add(_detailsToggle, 0, 6);
         _detailsToggle.Click += (_, _) => { _detailsHost.Visible = !_detailsHost.Visible; _technicalDetails.Visible = _detailsHost.Visible; content.RowStyles[5].Height = _detailsHost.Visible ? 130 : 0; content.PerformLayout(); _detailsToggle.Text = _detailsHost.Visible ? "Hide build details" : "Build details"; };
         viewport.Controls.Add(content);
-        viewport.SizeChanged+=(_,_)=>{int width=Math.Max(180,viewport.ClientSize.Width-24);_completionWarning.MaximumSize=new Size(width,0);_completionSummary.MaximumSize=new Size(width,0);content.PerformLayout();};
+        viewport.SizeChanged+=(_,_)=>{int width=Math.Max(180,viewport.ClientSize.Width-24);_operationStatus.MaximumSize=new Size(width,0);_completionWarning.MaximumSize=new Size(width,0);_completionSummary.MaximumSize=new Size(width,0);content.PerformLayout();};
         root.Controls.Add(viewport, 0, 1);
         _progress.Dock = DockStyle.Fill;
         root.Controls.Add(_progress, 0, 2);
@@ -1125,7 +1127,7 @@ internal sealed class MainForm : Form
 
     private void RefreshProgress()
     {
-        if (!_operationActive || _operationOutput.Length == 0) return;
+        if (!_operationActive || !_progressTimer.Enabled || _operationOutput.Length == 0) return;
         var phases = new (string File, string Text)[]
         {
             ("result.json", "Finalizing the package and checking the generated files…"),
