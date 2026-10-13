@@ -11,6 +11,7 @@ PROJECT = Path(__file__).resolve().parents[2]
 _runtime_lease = open(PROJECT / 'runtime-use.lock', 'rb') if (PROJECT / 'runtime-use.lock').is_file() else None
 for task in ('T02', 'T02A', 'T06', 'T07', 'T08'):
     sys.path.insert(0, str(PROJECT / 'prototypes' / task))
+from best_effort import HostProtectionError, StageFailed, QUALITY_ERRORS, finding, guard_members, owned_path
 from nif_refs import Nif, Cursor, prove_only_references_changed, texture_reference
 from head_validate import head
 from nif_detail import detail
@@ -28,13 +29,15 @@ from head_physics import physics_inputs
 from head_skeleton import preload as preload_head_skeleton
 
 def norm(value, category=None):
-    if category == 'textures': value = texture_reference(value)
+    if category == 'textures':
+        try: value = texture_reference(value)
+        except ValueError as error: raise HostProtectionError('Unsafe creator texture reference') from error
     value = value.replace('\\', '/').lower()
-    if value.startswith('/'): raise ValueError('Rooted asset reference')
+    if value.startswith('/'): raise HostProtectionError('Rooted asset reference')
     while '//' in value: value=value.replace('//','/')
     if value.startswith('data/'): value = value[5:]
     if category and not value.startswith(category + '/'): value = category + '/' + value
-    if ':' in value or any(p in ('', '.', '..') for p in value.split('/')): raise ValueError('Unsafe asset path: ' + value)
+    if ':' in value or any(p in ('', '.', '..') for p in value.split('/')): raise HostProtectionError('Unsafe asset path: ' + value)
     return value
 
 def shader_signature(d, shape):
@@ -60,11 +63,12 @@ class Build:
         self.plan = self.load(Path(plan_path)); self.owner = self.load(self.root / 'owned-output.json')
         self.overlay_notice = self.plan.get('overlayNotice') or dict(warning='RaceMenu overlays are not fully supported yet and may be missing from this follower.', playerRegistration=None, omittedOperations=[], detectionExhaustive=False)
         if self.plan['schema'] != 'lean-export-input-plan/v1' or self.owner['kind'] != 'T09B lean export build': raise ValueError('Unowned/unsupported compact plan')
-        if self.plan['gaps']: raise ValueError('Required inputs remain unresolved')
+        self.warnings = list(self.plan.get('buildWarnings') or [])
+        for gap in self.plan['gaps']: self.warn('input-quality','selected-input',gap['evidence'])
         outputs = self.plan.get('outputs')
         self.variants = outputs['variants'] if outputs else (['prebuilt', 'obody'] if self.plan['body'] else ['as-is'])
         if not self.variants or len(set(self.variants)) != len(self.variants) or any(v not in ('prebuilt','obody','as-is') for v in self.variants): raise ValueError('Invalid selected output set')
-        if ('as-is' in self.variants) != (self.plan['body'] is None): raise ValueError('Selected output does not match body applicability')
+        if self.plan['body'] is None and self.variants != ['as-is']: self.warn('prebuilt-fallback','body-input','No recoverable assigned-preset build plan')
         self.writer = Path(writer).resolve()
         naming = names(self.plan,self.owner)
         self.uuid = naming['identity']; self.namespace = naming['namespace']; self.plugin = naming['plugin']; self.mod_name=naming['display']
@@ -75,6 +79,7 @@ class Build:
         self.choices = {r['reference']: r for r in self.plan.get('assetChoices', []) if r['layer'] == 'shared'}
         self.retained = []
         self.head = self.load(self.root / 'private-head-result.json')
+        self.warnings.extend(r for r in self.head.get('buildWarnings',[]) if r not in self.warnings)
         self.moved = {a['reference']: a['destination'] for a in self.head['assets']}
         self.assets = []; self.paths = {}; self.prebuilt = {}; self.preset = None; self.ground_shapes = []
         self.diff_cache = {}; self.diff_pins = {}
@@ -108,13 +113,41 @@ class Build:
         if (self.root / 'stop').exists(): raise InterruptedError('Owned build cancelled')
 
     def owned(self, path):
-        path = Path(path).resolve()
-        if not path.is_relative_to(self.root): raise ValueError('Stage path escapes owned output')
-        q = path
-        while q != self.root:
-            if q.is_symlink() or q.is_junction(): raise ValueError('Owned path is a link')
-            q = q.parent
-        return path
+        return owned_path(self.root, path)
+
+    def warn(self, code, stage, detail):
+        row = finding(code, stage, detail)
+        if row not in self.warnings: self.warnings.append(row)
+        return row
+
+    def quality(self, code, stage, operation, fallback=None):
+        self.check()
+        try: return operation()
+        except QUALITY_ERRORS as error:
+            self.warn(code, stage, error)
+            return fallback
+
+    def assessment(self, data, variant, hosts, external, external_data):
+        guard_members(data)
+        # Every serialized reference is checked for traversal separately from
+        # output quality. These checks cannot become warning-only checks.
+        for name, raw in {**data, **external_data}.items():
+            if name.lower().endswith('.nif'):
+                model = self.quality('asset-quality', variant, lambda: Nif(raw))
+                if model is not None:
+                    for edge in model.references(): norm(edge['value'], 'textures' if edge['field']=='texture' else 'meshes')
+        fallback=dict(passed=False,checksComplete=False,retainedReferences=[r['reference'] for r in external],missingReferences=list(self.missing.values()),completeReferenceClosure=False,runtimeVerified=False)
+        return self.quality('package-quality', variant, lambda: validate_members(data,self.plugin,self.uuid,variant,hosts,external,external_data,require_compatibility=True,missing_references=list(self.missing.values()),best_effort=True), fallback)
+
+    def captured_preset(self):
+        body=self.plan['body']
+        if body is None or self.preset is not None: return
+        _, authored=self.staged(body['xmlReference'])
+        originals=[p for p in ET.fromstring(authored).findall('Preset') if p.get('name')==body['assignedPreset']]
+        if len(originals)!=1: raise ValueError('Authored preset identity is not unique')
+        preset=copy.deepcopy(originals[0]);preset.set('name','AutoFollower_'+self.uuid+'_'+body['assignedPreset'])
+        document=ET.Element('SliderPresets');document.append(preset)
+        self.preset=dict(original=authored,completed=ET.tostring(document,encoding='utf-8',xml_declaration=True),runtimeName=preset.get('name'),originalValues=len(preset.findall('SetSlider')),defaults=[])
 
     def read(self, path):
         self.check(); path = self.owned(path); b = path.read_bytes()
@@ -130,7 +163,7 @@ class Build:
         ref = norm(reference); source = self.sources[ref]
         p = self.root / ('private-head/' + self.moved[ref] if ref in self.moved else 'assets/' + source['reference'])
         b = self.read(p)
-        if len(b) != source['bytes'] or hashlib.sha256(b).hexdigest().upper() != source['sha256']: raise ValueError('Staged source changed: ' + ref)
+        if len(b) != source['bytes'] or hashlib.sha256(b).hexdigest().upper() != source['sha256']: raise HostProtectionError('Staged source changed: ' + ref)
         return p, b
 
     def run(self, command, cwd, name):
@@ -165,7 +198,7 @@ class Build:
                 process.terminate(); process.wait(timeout=15); raise
         receipt = dict(stage=name, exitCode=process.returncode, milliseconds=int((time.monotonic()-started)*1000), log=str(log))
         self.stages.append(receipt); self.dump(self.root / 'package-stage-progress.json', self.stages)
-        if process.returncode: raise ValueError('Required stage failed: ' + name + '; see ' + str(log))
+        if process.returncode: raise StageFailed(name, process.returncode)
         return receipt
 
     def native_path(self, path):
@@ -215,7 +248,7 @@ class Build:
     def body(self):
         body = self.plan['body']
         if body is None:
-            self.dump(self.root/'body-work.json', dict(route='as-is', bodySlideInvoked=False, projectInputsRequired=False, basis='Non-OBody: captured installed body/outfit geometry, private references only'))
+            self.dump(self.root/'body-work.json', dict(route='as-is', bodySlideInvoked=False, projectInputsRequired=False, basis='Non-OBody: captured installed body/outfit geometry, private references only' if self.variants==['as-is'] else 'Assigned-preset input unavailable: captured installed body/outfit geometry, no preset bake or automatic assignment claimed'))
             return
         if 'projects' not in body: raise ValueError('Required body plan was not established')
         if 'prebuilt' not in self.variants or not body['projects']:
@@ -303,7 +336,7 @@ class Build:
             try:
                 with probe.open('xb') as stream:
                     created = True; stream.write(b'BodySlide owned path check')
-                if not (Path(native) / probe.name).samefile(probe): raise ValueError('BodySlide owned path equivalence failed')
+                if not (Path(native) / probe.name).samefile(probe): raise HostProtectionError('BodySlide owned path equivalence failed')
             except OSError as error:
                 raise ValueError('BodySlide build work folder is not writable. Set OutputRoot in application.json to a writable short ASCII folder outside game, mod and input folders, then retry. Existing attempts are preserved.') from error
             finally:
@@ -322,18 +355,24 @@ class Build:
             native_dest = Path(native_outputs) / str(i)
             if len(str(native_dest / ('meshes/p'+str(i)))) >= 248 or len(str(native_dest / ('meshes/p'+str(i)+'/mesh_1.nif'))) >= 260:
                 raise ValueError('BodySlide build work path unsupported: generated mesh path exceeds the native path limit. Set OutputRoot in application.json to a writable short ASCII folder, then retry.')
-            self.run([Path(native_tool) / tool_exe.name, '-gbuild', 'T09G-'+str(i), '-p', body['assignedPreset'], '-t', str(native_dest)+'\\'], Path(native_tool), 'prebuilt-'+str(i))
-            log = self.read(native_log).decode('utf-8', errors='replace')
-            if not any(marker in log for marker in ('All group build sets processed successfully!', 'All command-line build sets processed successfully!')):
-                raise ValueError('BodySlide group success receipt absent')
-            generated = sorted(dest.rglob('*.nif'))
-            if len(generated) != 2 or list(dest.rglob('*.tri')): raise ValueError('Unexpected prebuilt weight pair/runtime TRI')
-            for endpoint, path in enumerate(generated):
-                ref = norm(row['outputTarget']); ref = ref[:-6] + '_' + str(endpoint) + '.nif'
-                self.prebuilt[ref] = path
-            validation.extend(self.validate_prebuilt(row, project_roots[row['name']], project, generated, values, filtered))
-        self.dump(base / 'body-result.json', dict(projects=body['projects'], prebuiltPairs=len(body['projects']), authoredValuesPreserved=len(values), defaults=self.preset['defaults'], garmentChoice=dict(zap='Remove Lower Torso Armor', choice=False, authority='D51'), validation=validation, inputRelocations=relocations, obodyGeometryGenerated=False))
-        self.dump(self.root/'body-work.json', dict(route='XML-prebuilt', bodySlideInvoked=True, projectsBuilt=len(body['projects']), selectedVariants=self.variants))
+            try:
+                self.run([Path(native_tool) / tool_exe.name, '-gbuild', 'T09G-'+str(i), '-p', body['assignedPreset'], '-t', str(native_dest)+'\\'], Path(native_tool), 'prebuilt-'+str(i))
+                log=self.read(native_log).decode('utf-8',errors='replace')
+                if not any(marker in log for marker in ('All group build sets processed successfully!', 'All command-line build sets processed successfully!')):
+                    self.warn('prebuilt-quality','prebuilt-'+str(i),'BodySlide success receipt absent; only actually written readable outputs can be used')
+                generated=sorted(dest.rglob('*.nif'))
+                if len(generated)!=2: raise ValueError('No complete readable prebuilt weight pair')
+                for path in generated: Nif(self.read(path))
+                for endpoint,path in enumerate(generated):
+                    ref=norm(row['outputTarget']);self.prebuilt[ref[:-6]+'_'+str(endpoint)+'.nif']=path
+                if list(dest.rglob('*.tri')): self.warn('prebuilt-quality','prebuilt-'+str(i),'Unexpected runtime TRI was generated; captured compatible morph inputs are preserved where called')
+                rows=self.quality('prebuilt-quality','geometry-'+str(i),lambda:self.validate_prebuilt(row,project_roots[row['name']],project,generated,values,filtered),[])
+                validation.extend(rows)
+            except (*QUALITY_ERRORS, FileNotFoundError) as error:
+                self.warn('prebuilt-fallback','prebuilt-'+str(i),error)
+                validation.append(dict(project=row['name'],passed=False,presetBaked=False,installedFallback=True,error=str(error)))
+        self.dump(base / 'body-result.json', dict(projects=body['projects'], prebuiltPairs=len(self.prebuilt)//2, authoredValuesPreserved=len(values), defaults=self.preset['defaults'], garmentChoice=dict(zap='Remove Lower Torso Armor', choice=False, authority='D51'), validation=validation, inputRelocations=relocations, obodyGeometryGenerated=False))
+        self.dump(self.root/'body-work.json', dict(route='XML-prebuilt', bodySlideInvoked=True, projectsBuilt=len(self.prebuilt)//2, selectedVariants=self.variants))
 
     def validate_prebuilt(self, row, node, project, generated, values, choices):
         # Independent OSD/XML simulation validates authored values and the
@@ -394,9 +433,9 @@ class Build:
 
     def isolate(self):
         private_race=self.plan.get('followerSettings',{}).get('values',{}).get('raceMode','private')!='existing'
-        physics=physics_inputs(self.plan,self.root,lambda value,field: norm(value,'meshes' if field=='BODYTRI' else None)) if private_race else []
+        physics=self.quality('asset-quality','smp-inputs',lambda:physics_inputs(self.plan,self.root,lambda value,field: norm(value,'meshes' if field=='BODYTRI' else None)),[]) if private_race else []
         for source in physics:
-            if hashlib.sha256(source['model'].original).hexdigest().upper()!=self.sources[source['reference']]['sha256']:raise ValueError('Selected SMP source tree changed')
+            if hashlib.sha256(source['model'].original).hexdigest().upper()!=self.sources[source['reference']]['sha256']:raise HostProtectionError('Selected SMP source tree changed')
         roots = self.root / 'private-assets'; shared = roots / 'shared'; shared.mkdir(parents=True)
         for ref, source in self.sources.items():
             if source.get('runtimeAsset', True) and ref.startswith(('meshes/', 'textures/', 'sound/')):
@@ -421,15 +460,16 @@ class Build:
                     category = 'textures' if edge['field'] == 'texture' else 'meshes'
                     dependency = norm(edge['value'], category)
                     if dependency in self.missing: return edge['value']
-                    if dependency not in self.paths: raise ValueError('Required private dependency unresolved: ' + dependency)
+                    if dependency not in self.paths:
+                        self.warn('asset-quality','asset-reference','Unresolved private dependency: '+dependency);return edge['value']
                     target = self.paths[dependency]
                     return (target.removeprefix('meshes/') if edge['field'] == 'BODYTRI' else target).replace('/', '\\')
                 if self.choices.get(ref, {}).get('mode') == 'Retain dependency':
                     for edge in model.references():
                         dependency = norm(edge['value'], 'textures' if edge['field']=='texture' else 'meshes')
-                        if dependency not in self.missing and self.paths.get(dependency) != dependency: raise ValueError(ref + ': retained NIF cannot call privately relocated ' + dependency + '; package this NIF or retain its dependency')
+                        if dependency not in self.missing and self.paths.get(dependency) != dependency: self.warn('asset-quality','retained-reference',ref+': retained source still calls its original dependency '+dependency)
                 else:
-                    changes = model.rewrite(replace); raw = model.encode(); proof = prove_only_references_changed(before, raw, changes)
+                    changes = model.rewrite(replace); raw = model.encode(); proof = self.quality('asset-quality','asset-reference-proof',lambda:prove_only_references_changed(before,raw,changes),dict(passed=False,checksComplete=False))
             if self.choices.get(ref, {}).get('mode') == 'Retain dependency':
                 row = dict(layer='shared',assetReference=ref,destination=ref,source=source,mode='Retain dependency',output=None)
                 self.retained.append(dict(reference=ref,providerName=self.choices[ref]['providerName'],authority=source,sourceIdentity=self.choices[ref]['sourceIdentity'],requiredReferences=self.choices[ref]['requiredReferences'],stagedPath=str(path)))
@@ -439,37 +479,41 @@ class Build:
                 with dest.open('xb') as f: f.write(raw)
                 self.generated += len(raw)
             else: os.rename(path, dest)
-            self.assets.append(dict(layer='shared', assetReference=ref, destination=destination, output=dict(path=str(dest), bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest().upper()), source=source, referenceChanges=changes, referenceProof=proof, unchangedGeometry=True))
+            self.assets.append(dict(layer='shared', assetReference=ref, destination=destination, output=dict(path=str(dest), bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest().upper()), source=source, referenceChanges=changes, referenceProof=proof, unchangedGeometry=not changes or proof is not None and proof.get('passed',True)))
         # The finished head has already passed T09F's geometry-preserving editor.
         hpath = self.root / 'private-head' / self.head['head']; raw = self.read(hpath); dest = shared / self.head['head']; dest.parent.mkdir(parents=True, exist_ok=True); os.rename(hpath, dest)
         self.assets.append(dict(layer='shared', assetReference='meshes/lean-export/head.nif', destination=self.head['head'], output=dict(path=str(dest), bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest().upper()), source=self.sources['meshes/lean-export/head.nif'], referenceProof=self.head['referenceProof']))
         for ref, path in self.prebuilt.items():
             raw = self.read(path); model = Nif(raw)
             changes = model.rewrite(lambda edge: edge['value'] if norm(edge['value'], 'textures' if edge['field']=='texture' else 'meshes') in self.missing else self.paths[norm(edge['value'], 'textures' if edge['field']=='texture' else 'meshes')].replace('/', '\\'))
-            encoded = model.encode(); proof = prove_only_references_changed(raw, encoded, changes)
+            encoded = model.encode(); proof = self.quality('asset-quality','prebuilt-reference-proof',lambda:prove_only_references_changed(raw,encoded,changes),dict(passed=False,checksComplete=False))
             destination = 'meshes/'+self.namespace+'/'+ref.removeprefix('meshes/'); dest = roots / 'prebuilt' / destination; dest.parent.mkdir(parents=True, exist_ok=True); dest.write_bytes(encoded); self.generated += len(encoded)
             self.assets.append(dict(layer='prebuilt', assetReference=ref, destination=destination, output=dict(path=str(dest), bytes=len(encoded), sha256=hashlib.sha256(encoded).hexdigest().upper()), source=dict(kind='Fresh XML BodySlide', input=str(path)), referenceChanges=changes, referenceProof=proof))
-        skeleton_ref = norm(next(s['reference'] for s in self.plan['sources'] if s['consumer']=='winning selected-sex race skeleton'))
-        skeleton_path = self.staged(skeleton_ref)[0] if self.choices.get(skeleton_ref,{}).get('mode')=='Retain dependency' else shared/self.paths[skeleton_ref]
-        skeleton = Nif(self.read(skeleton_path)); available = set(skeleton.nodes()); bindings = []
-        skeleton_physics=dict(required=False,runtimeVerified=False)
-        if physics:
-            head_model=Nif(self.read(shared/self.head['head']))
-            if set(head_model.skin_bones())-available and self.choices.get(skeleton_ref,{}).get('mode')=='Retain dependency':
-                raise ValueError('Selected SMP hair needs original source bones added to a packaged private skeleton. Package the skeleton to apply this correction; an installed dependency cannot be modified.')
-            skeleton_physics=preload_head_skeleton(skeleton,head_model,physics)
-            if skeleton_physics['required']:
-                skeleton_path.write_bytes(skeleton.encode());self.generated+=skeleton_path.stat().st_size
-                asset=next(a for a in self.assets if a['assetReference']==skeleton_ref)
-                asset['output']=dict(path=str(skeleton_path),bytes=skeleton_path.stat().st_size,sha256=hashlib.sha256(skeleton.encode()).hexdigest().upper())
-                asset['smpSkeletonPreload']=skeleton_physics;available=set(skeleton.nodes())
-                asset['referenceProofScope']='Reference edits precede SMP preload; preload input/output skeleton hashes bind the final source-hierarchy addition.'
+        skeleton_source=next((s for s in self.plan['sources'] if s['consumer']=='winning selected-sex race skeleton'),None)
+        bindings=[];available=set();skeleton_physics=dict(required=False,passed=False,runtimeVerified=False)
+        if skeleton_source is None: self.warn('asset-quality','skeleton','Selected skeleton bytes are unavailable; original record reference preserved')
+        else:
+            skeleton_ref = norm(skeleton_source['reference'])
+            skeleton_path = self.staged(skeleton_ref)[0] if self.choices.get(skeleton_ref,{}).get('mode')=='Retain dependency' else shared/self.paths[skeleton_ref]
+            skeleton = Nif(self.read(skeleton_path)); available = set(skeleton.nodes()); bindings = []
+            skeleton_physics=dict(required=False,runtimeVerified=False)
+            if physics:
+                head_model=Nif(self.read(shared/self.head['head']))
+                if set(head_model.skin_bones())-available and self.choices.get(skeleton_ref,{}).get('mode')=='Retain dependency':
+                    self.warn('asset-quality','smp-skeleton','Selected retained skeleton lacks original hair bones; installed dependency remains unchanged')
+                skeleton_physics=dict(required=False,passed=False,runtimeVerified=False) if self.choices.get(skeleton_ref,{}).get('mode')=='Retain dependency' else self.quality('asset-quality','smp-skeleton',lambda:preload_head_skeleton(skeleton,head_model,physics),dict(required=False,passed=False,runtimeVerified=False))
+                if skeleton_physics['required']:
+                    skeleton_path.write_bytes(skeleton.encode());self.generated+=skeleton_path.stat().st_size
+                    asset=next(a for a in self.assets if a['assetReference']==skeleton_ref)
+                    asset['output']=dict(path=str(skeleton_path),bytes=skeleton_path.stat().st_size,sha256=hashlib.sha256(skeleton.encode()).hexdigest().upper())
+                    asset['smpSkeletonPreload']=skeleton_physics;available=set(skeleton.nodes())
+                    asset['referenceProofScope']='Reference edits precede SMP preload; preload input/output skeleton hashes bind the final source-hierarchy addition.'
         for asset in self.assets:
             if not asset['destination'].endswith('.nif'): continue
             path = self.staged(asset['assetReference'])[0] if asset.get('mode')=='Retain dependency' else Path(asset['output']['path'])
             model = Nif(self.read(path)); missing = set(model.skin_bones()) - available - set(model.nodes())
-            if missing: raise ValueError('Required skeleton binding absent: ' + asset['assetReference'] + ' -> ' + str(sorted(missing)))
-            bindings.append(dict(model=asset['destination'], weightedBones=len(model.skin_bones()), missing=[]))
+            if missing: self.warn('asset-quality','skeleton-binding',asset['assetReference']+' -> '+str(sorted(missing)))
+            bindings.append(dict(model=asset['destination'], weightedBones=len(model.skin_bones()), missing=sorted(missing),passed=not missing))
         manifest = dict(schema='lean-private-assets/v1', missingReferences=list(self.missing.values()), inputPlan=str(self.root/'input-plan.json'), pluginIdentity=self.plugin, namespace=self.namespace, assets=self.assets, retainedDependencies=self.retained, assetChoices=self.plan.get('assetChoices',[]), skeletonBindings=bindings, smpSkeletonPreload=skeleton_physics, groundShapeNames=self.ground_shapes, variants=self.variants)
         self.dump(roots / 'asset-manifest.json', manifest); return manifest
 
@@ -491,13 +535,22 @@ class Build:
             locations = {k:a['destination'] for k,a in selected.items()}
             if not packages or locations != previous_locations:
                 variant_plugin_root=plugin_root/variant
-                self.run([self.writer,'generate',manifest_path,self.root/'record-inputs.json',variant_plugin_root],PROJECT,'plugin-generation-'+variant)
+                try: self.run([self.writer,'generate-best-effort',manifest_path,self.root/'record-inputs.json',variant_plugin_root],PROJECT,'plugin-generation-'+variant)
+                except StageFailed as error:
+                    if not (variant_plugin_root/self.plugin).is_file():
+                        self.warn('variant-unavailable',variant,error);continue
+                    self.warn('plugin-quality',variant,error)
                 validation_path=self.root/('plugin-validation-'+variant+'.json')
-                self.run([self.writer,'validate-lean',variant_plugin_root/self.plugin,self.root/'master-paths.json',validation_path,self.root/'input-plan.json',manifest_path],PROJECT,'plugin-validation-'+variant)
-                plugin_bytes=self.read(variant_plugin_root/self.plugin); plugin_validation=self.load(validation_path)
-                plugin_validation['requiredMasterReasons']=[d for d in self.load(variant_plugin_root/'records.json')['dependencies'] if d['master']!='Skyrim.esm']
-                require_settings_readback(self.plan,plugin_validation)
-                plugin_validation['savedPlacement']=validate_placement(plugin_bytes,self.plan)
+                self.quality('plugin-quality',variant,lambda:self.run([self.writer,'validate-best-effort',variant_plugin_root/self.plugin,self.root/'master-paths.json',validation_path,self.root/'input-plan.json',manifest_path],PROJECT,'plugin-validation-'+variant))
+                plugin_bytes=self.read(variant_plugin_root/self.plugin); plugin_validation=self.load(validation_path) if validation_path.is_file() else dict(passed=False,checksComplete=False)
+                if not plugin_validation.get('passed',False): self.warn('plugin-quality',variant,'Independent plugin readback failed: '+json.dumps(plugin_validation))
+                plugin_validation['masters']=read_bytes(plugin_bytes)['masters']
+                record_result=self.quality('plugin-quality','writer-details-'+variant,lambda:self.load(variant_plugin_root/'records.json'),dict(dependencies=[],buildWarnings=[]))
+                for row in record_result.get('buildWarnings',[]):
+                    self.warn('plugin-quality',variant,row.get('detail') or row.get('Detail') or 'Writer quality assessment failed')
+                plugin_validation['requiredMasterReasons']=[d for d in record_result['dependencies'] if d['master']!='Skyrim.esm']
+                self.quality('plugin-quality','settings-'+variant,lambda:require_settings_readback(self.plan,plugin_validation))
+                plugin_validation['savedPlacement']=self.quality('plugin-quality','placement-'+variant,lambda:validate_placement(plugin_bytes,self.plan),dict(passed=False,checksComplete=False))
                 if not packages:
                     self.dump(self.root/'plugin-validation.json',plugin_validation)
                     (plugin_root/self.plugin).write_bytes(plugin_bytes)
@@ -507,15 +560,15 @@ class Build:
             external_data = {r['reference']:self.read(Path(r['stagedPath'])) for r in external}
             original = data.pop(self.head['head']); tint = data.pop(self.head['tint']); n = Nif(original)
             changes = n.rewrite(lambda r: fgtint.replace('/', '\\') if r['field']=='texture' and r['slot']==6 and norm(r['value'],'textures')==self.head['tint'] else r['value'])
-            if len(changes)!=1: raise ValueError('Final FaceGen tint binding is not unique')
+            if len(changes)!=1: self.warn('head-quality',variant,'Final FaceGen tint binding is not unique')
             data[fghead] = n.encode(); data[fgtint] = tint; data[self.plugin] = plugin_bytes
-            proof = prove_only_references_changed(original, data[fghead], changes)
+            proof = self.quality('head-quality','facegen-reference-proof-'+variant,lambda:prove_only_references_changed(original,data[fghead],changes),dict(passed=False,checksComplete=False))
             if self.preset:
                 data['docs/presets/original/Sen Abersha.xml'] = self.preset['original']
                 prefix = 'docs/presets/completed/' if variant=='prebuilt' else 'CalienteTools/BodySlide/SliderPresets/'
                 data[prefix+self.preset['runtimeName']+'.xml'] = self.preset['completed']
             successor_members(data, variant, self.plugin)
-            compatibility=emit_compatibility(data,self.plugin,self.uuid,variant,self.preset['runtimeName'] if self.preset else None)
+            compatibility=self.quality('compatibility-unavailable',variant,lambda:emit_compatibility(data,self.plugin,self.uuid,variant,self.preset['runtimeName'] if self.preset else None))
             data['README-T08.txt'] += (f'\nLean export build: selected ESS/co-save and required RaceMenu export bundle, selected installed Data sources. Export association is explicit and has no unique ESS/session binding. Preset: {self.preset["runtimeName"] if self.preset else "none"}. Runtime behavior remains unverified. {self.plan['skin']['runtimeAssignmentOmission']}\n').encode()
             for warning in self.plan.get('assetRepairWarnings') or []:
                 data['README-T08.txt'] += ('\nAsset repair: '+warning+'\n').encode()
@@ -542,7 +595,8 @@ class Build:
                         if edge['field']=='BODYTRI': used.add(norm(edge['value'],'meshes'))
             data = {k:v for k,v in data.items() if k in used}
             hosts = self.plan.get('hostResources', [])
-            validation = validate_members(data, self.plugin, self.uuid, variant, hosts, external, external_data,require_compatibility=True,missing_references=list(self.missing.values()))
+            validation = self.assessment(data,variant,hosts,external,external_data)
+            if not validation.get('passed'): self.warn('package-quality',variant,json.dumps(validation))
             # Report only dependencies actually called in this variant. A retained
             # installed BODYTRI may be unused after the prebuilt override.
             external=[r for r in external if r['reference'] in validation['retainedReferences'] or self.choices.get(r['reference'],{}).get('requiredMode')=='Retain dependency']
@@ -559,7 +613,7 @@ class Build:
             data['README-T08.txt']+=declaration.encode()
             target=self.plan['savedActor']['placement']
             data['README-T08.txt']+=('Saved destination: '+target['cell']+'; worldspace '+str(target['worldspace'])+'; position '+str(target['position'])+'; rotation radians '+str(target['rotation'])+'; in-game accessibility/persistence unverified.\n').encode()
-            validation=validate_members(data,self.plugin,self.uuid,variant,hosts,external,external_data,require_compatibility=True,missing_references=list(self.missing.values()))
+            validation=self.assessment(data,variant,hosts,external,external_data)
             package_payloads[variant] = data
             package_checks[variant] = (hosts, external, external_data, validation)
             called_fields={edge['field'] for name,raw in {**data,**external_data}.items() if name.lower().endswith('.nif') for edge in Nif(raw).references()}
@@ -577,7 +631,7 @@ class Build:
                         key=struct.unpack_from('<I',block)[0]
                         if key<len(mesh.strings) and mesh.strings[key] in (b'HH_OFFSET',b'SDTA'):heel_metadata.add(mesh.strings[key].decode())
             if heel_metadata:host_requirements.append(dict(name='Compatible RaceMenu/SKEE equippable-transform host; keep Heels Fix for its interaction corrections',basis='Original footwear adjustment metadata preserved: '+', '.join(sorted(heel_metadata))+'; heel lift reapplied at runtime, never baked into the follower',runtimeVerified=False))
-            if variant=='obody':host_requirements.append(dict(name='Compatible installed OBody NG',basis='Selected actual OBody body/outfits and packaged assigned preset',runtimeVerified=False))
+            if variant=='obody':host_requirements.append(dict(name='Compatible installed OBody NG',basis='Captured installed body/outfits with the packaged assigned preset' if self.preset else 'Captured installed body/outfits; no recoverable preset or automatic assignment is claimed',runtimeVerified=False))
             for host in host_requirements:data['README-T08.txt']+=('Required host: '+host['name']+'; '+host['basis']+'\n').encode()
             if self.plan.get('followerSettings'):
                 data['README-T08.txt']+=(level_summary(self.plan['followerSettings'])+'\n').encode()
@@ -592,24 +646,44 @@ class Build:
             payload_hash=hashlib.sha256()
             for name,raw in sorted(data.items()):payload_hash.update(name.encode('utf-8')+b'\0'+hashlib.sha256(raw).digest())
             skin_notice='Base feet and other non-body skin use captured installed geometry in every output, with private reference edits only. Only bodies and outfits affected by the applied OBody preset receive a BodySlide build. The Prebuilt output does not bake base foot morphs; recipient OBody foot behavior remains unverified.' if self.plan['skin'].get('asIsFootModels') else None
-            packages.append(dict(variant=variant, overlayNotice=self.overlay_notice, materialConflicts=self.plan.get("materialConflicts") or [], runtimeAssignmentWarnings=self.plan.get("runtimeAssignmentWarnings") or [], assetRepairWarnings=self.plan.get("assetRepairWarnings") or [], equipmentOmissions=self.plan.get("equipmentOmissions") or [], missingReferences=list(self.missing.values()), skinGeometryNotice=skin_notice, classification=classification,followerSettings=self.plan.get('followerSettings'),assetResults=asset_results, retainedDependencies=dependencies,requiredMasters=plugin_validation['masters'],hostRequirements=host_requirements,compatibility=compatibility,pluginValidation=plugin_validation,payloadMapSha256=payload_hash.hexdigest().upper(),members=len(data),uncompressedBytes=sum(map(len,data.values())), validation=validation, faceGenReferenceProof=proof))
+            packages.append(dict(variant=variant, buildWarnings=list(self.warnings),presetAvailable=self.preset is not None,presetBakeComplete=variant!='prebuilt' or not any(w['category'] in ('prebuilt-fallback','prebuilt-quality') for w in self.warnings), overlayNotice=self.overlay_notice, materialConflicts=self.plan.get("materialConflicts") or [], runtimeAssignmentWarnings=self.plan.get("runtimeAssignmentWarnings") or [], assetRepairWarnings=self.plan.get("assetRepairWarnings") or [], equipmentOmissions=self.plan.get("equipmentOmissions") or [], missingReferences=list(self.missing.values()), skinGeometryNotice=skin_notice, classification=classification,followerSettings=self.plan.get('followerSettings'),assetResults=asset_results, retainedDependencies=dependencies,requiredMasters=plugin_validation['masters'],hostRequirements=host_requirements,compatibility=compatibility,pluginValidation=plugin_validation,payloadMapSha256=payload_hash.hexdigest().upper(),members=len(data),uncompressedBytes=sum(map(len,data.values())), validation=validation, faceGenReferenceProof=proof))
+        def applicable_warnings(variant):
+            def applies(row):
+                if row.get('category')=='variant-unavailable': return True
+                scoped=next((v for v in self.variants if row['stage'] in (v,'settings-'+v,'placement-'+v,'writer-details-'+v,'selected-placement-'+v,'facegen-reference-proof-'+v)),None)
+                return scoped is None or scoped==variant
+            return [row for row in self.warnings if applies(row)]
+        def finalize_quality(maps):
+            # No output has been sealed yet. Assess exact selected branch maps,
+            # collect later findings, then finalize every surviving recipient.
+            for package in packages:
+                variant=package['variant'];branch=maps[variant]
+                hosts,external,external_data,prior_validation=package_checks[variant]
+                payload={k:v for k,v in branch.items() if k not in ('docs/Installation.txt','docs/Provenance.txt')}
+                selected_validation=self.assessment(payload,variant,hosts,external,external_data)
+                self.quality('plugin-quality','selected-placement-'+variant,lambda:validate_placement(payload[self.plugin],self.plan))
+                if selected_validation!=prior_validation:self.warn('package-quality',variant,'Selected branch assessment differs from the prior assessment')
+                package['selectedPayloadValidation']=selected_validation
+            for package in packages:package['buildWarnings']=applicable_warnings(package['variant'])
+        for package in packages:package['buildWarnings']=applicable_warnings(package['variant'])
         distribution_started=time.monotonic()
-        if len(self.variants)==1:
-            distribution = build_plain(package_root, package_payloads, packages, self.plugin, self.uuid, self.preset['runtimeName'] if self.preset else None, self.mod_name)
+        if not packages: raise ValueError('No requested variant produced a serializable core plugin; no follower ZIP can be written')
+        self.delivered_variants=[p['variant'] for p in packages]
+        if len(packages)==1:
+            distribution = build_plain(package_root, package_payloads, packages, self.plugin, self.uuid, self.preset['runtimeName'] if self.preset else None, self.mod_name, before_write=finalize_quality)
         else:
-            distribution = build_fomod(package_root, package_payloads, packages, self.plugin, self.uuid, True, self.preset['runtimeName'] if self.preset else None, self.mod_name)
+            distribution = build_fomod(package_root, package_payloads, packages, self.plugin, self.uuid, True, self.preset['runtimeName'] if self.preset else None, self.mod_name, before_write=finalize_quality)
             distribution['format']='fomod'
-        for variant,package in zip(manifest['variants'],packages):
+        for package in packages:
+            variant=package['variant']
             branch=distribution['branchMaps'][variant]
             member_manifest=package_root/(variant+'-payload-manifest.json')
             self.dump(member_manifest,dict(variant=variant,plugin=self.plugin,memberCount=len(branch),members=[dict(path=name,bytes=len(raw),sha256=hashlib.sha256(raw).hexdigest().upper()) for name,raw in sorted(branch.items())]))
             package['memberManifest']=str(member_manifest)
-            hosts,external,external_data,prior_validation=package_checks[variant]
-            validation_payload={k:v for k,v in branch.items() if k not in ('docs/Installation.txt','docs/Provenance.txt')}
-            selected_validation=validate_members(validation_payload,self.plugin,self.uuid,variant,hosts,external,external_data,require_compatibility=True,missing_references=list(self.missing.values()))
-            validate_placement(validation_payload[self.plugin],self.plan)
-            if selected_validation!=prior_validation:raise ValueError('FOMOD-selected branch validation differs: '+variant)
-            package['selectedPayloadValidation']=selected_validation
+            payload_hash=hashlib.sha256()
+            for name,raw in sorted(branch.items()):payload_hash.update(name.encode('utf-8')+b'\0'+hashlib.sha256(raw).digest())
+            package['payloadMapSha256']=payload_hash.hexdigest().upper()
+            package['members']=len(branch);package['uncompressedBytes']=sum(map(len,branch.values()))
         distribution['elapsedMilliseconds']=int((time.monotonic()-distribution_started)*1000)
         for package in packages:
             package['distribution'] = {k:v for k,v in distribution.items() if k not in ('branchMaps',)}
@@ -619,14 +693,18 @@ class Build:
         retained={r['reference'] for r in external};rows=[]
         for choice in self.plan.get('assetChoices',[]):
             ref=choice['reference'];destination=None
-            if variant not in choice['variants']:status='Not applicable to this variant'
+            if variant not in choice['variants']:
+                if variant=='prebuilt' and ref in selected and ref not in self.prebuilt:
+                    destination=selected[ref]['destination'];status='Captured installed fallback; requested preset bake unavailable'
+                else:status='Not applicable to this variant'
             else:
                 if choice['id']=='generated/original-preset':destination='docs/presets/original/Sen Abersha.xml'
-                elif choice['id']=='generated/completed-preset':destination=('docs/presets/completed/' if variant=='prebuilt' else 'CalienteTools/BodySlide/SliderPresets/')+self.preset['runtimeName']+'.xml'
+                elif choice['id']=='generated/completed-preset':destination=(('docs/presets/completed/' if variant=='prebuilt' else 'CalienteTools/BodySlide/SliderPresets/')+self.preset['runtimeName']+'.xml') if self.preset else None
                 elif ref=='meshes/lean-export/head.nif':destination=fghead
                 elif ref==norm(self.plan['appearance']['tintReference']):destination=fgtint
-                else:destination=selected[ref]['destination']
-                status='Retained dependency' if ref in retained else 'Packaged' if destination in data else 'Not called in this variant'
+                else:destination=selected.get(ref,{}).get('destination')
+                status='Retained dependency' if ref in retained else 'Packaged' if destination in data else 'Unavailable in this variant'
+                if choice['layer']=='prebuilt' and ref not in self.prebuilt: status='Captured installed fallback; requested preset bake unavailable'
             rows.append(dict(id=choice['id'],mode=choice['mode'],status=status,destination=destination,providerName=choice.get('providerName'),sourceIdentity=choice.get('sourceIdentity')))
         return rows
 
@@ -651,9 +729,12 @@ class Build:
 
     def build(self):
         try:
-            self.body(); manifest = self.isolate(); packages, distribution = self.package(manifest)
+            self.quality('prebuilt-fallback','body-transform',self.body)
+            self.quality('compatibility-unavailable','authored-preset',self.captured_preset)
+            manifest = self.isolate(); packages, distribution = self.package(manifest)
             self.retain_package(distribution)
-            self.dump(self.root/'package-stage-result.json', dict(status='structural-build-passed', overlayNotice=self.overlay_notice, packages=packages, distribution={k:v for k,v in distribution.items() if k not in ('branchMaps',)}, stages=self.stages, bytesRead=self.read_bytes, filesRead=len(self.read_files), generatedBytes=self.generated, copiedBytes=self.copied, elapsedMilliseconds=int((time.monotonic()-self.started)*1000), runtimeVerified=False, noDllPexOrHelpers=True, externalToolIoInstrumented=False))
+            failures=[dict(validationFailure=p['pluginValidation']['validationFailure']) for p in packages if p['pluginValidation'].get('validationFailure')]
+            self.dump(self.root/'package-stage-result.json', dict(status='built-with-warnings' if self.warnings else 'structural-build-passed',buildWarnings=self.warnings,validationFailures=failures,requestedVariants=self.variants,deliveredVariants=self.delivered_variants,unavailableVariants=[v for v in self.variants if v not in self.delivered_variants],qualityFindingsPresent=bool(self.warnings), overlayNotice=self.overlay_notice, packages=packages, distribution={k:v for k,v in distribution.items() if k not in ('branchMaps',)}, stages=self.stages, bytesRead=self.read_bytes, filesRead=len(self.read_files), generatedBytes=self.generated, copiedBytes=self.copied, elapsedMilliseconds=int((time.monotonic()-self.started)*1000), runtimeVerified=False, noDllPexOrHelpers=True, externalToolIoInstrumented=False))
         except BaseException as e:
             self.dump(self.root/'package-stage-result.json', dict(status='cancelled' if isinstance(e,InterruptedError) else 'failed', error=type(e).__name__+': '+str(e), stages=self.stages, bytesRead=self.read_bytes, filesRead=len(self.read_files), elapsedMilliseconds=int((time.monotonic()-self.started)*1000), outputsPreserved=True)); raise
 

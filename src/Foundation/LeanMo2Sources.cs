@@ -135,7 +135,7 @@ public sealed class LeanRecordIndex(LeanMo2Sources sources,CancellationToken tok
     readonly Dictionary<string,Row> winners=new(StringComparer.OrdinalIgnoreCase),origins=new(StringComparer.OrdinalIgnoreCase);
     readonly Dictionary<string,LeanRecord> records=new(StringComparer.OrdinalIgnoreCase);
     // These groups have concrete head/material/equipment record consumers.
-    static readonly HashSet<string> types=["NPC_","RACE","HDPT","ARMO","ARMA","TXST","WEAP","STAT","AMMO","PROJ","CELL","WRLD","FLST","ENCH","MGEF","CLAS","CSTY","PERK","SPEL","VTYP","FACT","SNDR","SNCT","SOPM"];
+    static readonly HashSet<string> types=["NPC_","RACE","HDPT","ARMO","ARMA","TXST","WEAP","STAT","AMMO","PROJ","CELL","WRLD","FLST","ENCH","MGEF","CLAS","CSTY","PERK","SPEL","VTYP","FACT","SNDR","SNCT","SOPM","KYWD"];
     readonly Dictionary<string,byte[]> rawRecords=new(StringComparer.OrdinalIgnoreCase),headers=new(StringComparer.OrdinalIgnoreCase);
     readonly Dictionary<string,(long Bytes,long WriteTime)> pluginIdentity=new(StringComparer.OrdinalIgnoreCase);
     readonly Dictionary<string,string> pluginBackings=new(StringComparer.OrdinalIgnoreCase);
@@ -218,9 +218,19 @@ public sealed class LeanRecordIndex(LeanMo2Sources sources,CancellationToken tok
     // the real plugin/master header and records, never a legacy capture schema.
     // Base player ACHR proves an unchanged scale only. Keep its range receipt;
     // the generated NPC never links to it or needs a flat ACHR overlay.
-    public object EmitInputs(string output){
+    public List<BuildQualityWarning> QualityWarnings {get;}=[];
+    public void CaptureKeywords(bool bestEffort=false){
+        // Only already-consumed record KWDA arrays need this supporting proof.
+        // The FormKey's origin can differ from the selected defining plugin.
+        foreach(string key in records.Where(x=>!x.Key.StartsWith("origin/",StringComparison.Ordinal)).SelectMany(x=>x.Value.Refs("KWDA")).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()){
+            try{var keyword=Get(key);if(keyword.Type!="KYWD")throw new InvalidDataException("Required keyword link is not KYWD: "+key);}
+            catch(InvalidDataException e)when(bestEffort){QualityWarnings.Add(BestEffortBuild.Finding("keyword-capture",e.Message,"plugin-quality","A selected keyword could not be resolved. The original link remains; behavior or loading may fail."));}
+        }
+    }
+    public object EmitInputs(string output,bool bestEffort=false){
+        CaptureKeywords(bestEffort);
         string masterFolder=SafePaths.Below(output,"master-headers");Directory.CreateDirectory(masterFolder);
-        foreach(var pair in pluginBackings){var info=new FileInfo(pair.Value);var original=pluginIdentity[pair.Key];if(info.Length!=original.Bytes||info.LastWriteTimeUtc.Ticks!=original.WriteTime)throw new InvalidDataException("Selected plugin changed: "+pair.Key);File.WriteAllBytes(SafePaths.Below(masterFolder,pair.Key),headers[pair.Value]);}
+        foreach(var pair in pluginBackings){SafePaths.NoLinks(pair.Value);var info=new FileInfo(pair.Value);var original=pluginIdentity[pair.Key];if(!info.Exists||info.Length!=original.Bytes||info.LastWriteTimeUtc.Ticks!=original.WriteTime){if(!bestEffort)throw new InvalidDataException("Selected plugin changed: "+pair.Key);QualityWarnings.Add(BestEffortBuild.Finding("record-source-readback","Selected plugin changed or became unavailable after capture: "+pair.Key));}File.WriteAllBytes(SafePaths.Below(masterFolder,pair.Key),headers[pair.Value]);}
         List<object> overlays=[];int n=0;foreach(var group in records.Where(x=>x.Value.Type is not ("ACHR" or "CELL" or "WRLD")&&!x.Key.StartsWith("origin/",StringComparison.Ordinal)).GroupBy(x=>x.Value.Backing)){
         byte[] Group(byte[] label,int kind,byte[] body){using var mem=new MemoryStream();using var w=new BinaryWriter(mem);w.Write(Encoding.ASCII.GetBytes("GRUP"));w.Write(24+body.Length);w.Write(label);w.Write(kind);w.Write(new byte[8]);w.Write(body);return mem.ToArray();}
         using var data=new MemoryStream();byte[] inlineHeader=(byte[])headers[group.Key].Clone();BitConverter.GetBytes(BitConverter.ToUInt32(inlineHeader,8)&~0x80u).CopyTo(inlineHeader,8);data.Write(inlineHeader);foreach(var typed in group.GroupBy(x=>x.Value.Type)){byte[] body=typed.SelectMany(x=>rawRecords[x.Key]).ToArray();if(typed.Key=="CELL"){if(typed.Count()!=1)throw new InvalidDataException("Bounded single origin CELL overlay required");uint id=uint.Parse(typed.Single().Value.Canonical.Split('|')[1],System.Globalization.NumberStyles.HexNumber);body=Group(BitConverter.GetBytes(id%10),2,Group(BitConverter.GetBytes(id/10%10),3,body));}data.Write(Group(Encoding.ASCII.GetBytes(typed.Key),0,body));}

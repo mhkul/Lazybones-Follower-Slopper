@@ -20,15 +20,15 @@ public static class SafePaths
     {
         for (var current = Path.GetFullPath(path); current != null; current = Path.GetDirectoryName(current))
             if ((System.IO.File.Exists(current) || Directory.Exists(current)) && (System.IO.File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
-                throw new IOException("Reparse point rejected: " + current);
+                throw new HostProtectionException("Reparse point rejected: " + current);
     }
     public static string Below(string root, string relative)
     {
         if (Path.IsPathRooted(relative) || relative.Split(['/', '\\']).Any(s => s is "." or ".." || s.Contains(':')))
-            throw new IOException("Relative non-traversing path required");
+            throw new HostProtectionException("Relative non-traversing path required");
         var absolute = Path.GetFullPath(Path.Combine(root, relative));
         var prefix = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)) + Path.DirectorySeparatorChar;
-        if (!absolute.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) throw new IOException("Path escapes owned root");
+        if (!absolute.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) throw new HostProtectionException("Path escapes owned root");
         NoLinks(absolute);
         return absolute;
     }

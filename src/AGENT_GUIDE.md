@@ -1,4 +1,4 @@
-# Lazybones Follower Slopper 0.1.2: agent guide
+# Lazybones Follower Slopper 0.1.3: agent guide
 
 The Windows x64 application builds a follower ZIP from a selected Skyrim save
 and matching finished RaceMenu export. Operate its WinForms GUI. There is no
@@ -51,11 +51,12 @@ checks still apply and do not establish universal compatibility.
    Review individual `Package standalone` / `Retain dependency` asset choices.
    Retained assets require their actual providers. Standalone selection does
    not prove complete closure when unresolved-reference warnings remain.
-   Missing compatible prebuilt outfit projects can be recovered by explicitly
-   omitting the named optional items, or canceling and choosing only OBody NG
-   (as-is) to keep their installed meshes. Restore compatible projects to
-   retain them in the BodySlide build. No output variant or equipment choice
-   changes automatically.
+   Missing compatible prebuilt outfit projects retain the captured meshes
+   automatically, with warnings that preset baking is unavailable for those
+   meshes. Restore compatible projects when a baked result is required. Review
+   Build details and the generated install instructions; captured meshes may
+   not match the requested shape. Equipment omissions and output selections
+   remain your choices.
 4. Select applicable BodySlide build, OBody NG (as-is), or both; acknowledge
    asset-sharing responsibility before Build. One output makes a plain ZIP;
    both build versions for a FOMOD installer choice.
@@ -143,9 +144,11 @@ remain untouched. This is not an instruction to purge arbitrary AppData.
 Recoverable missing textures, sounds and other references generally retain
 requested items/proved assets with original safe unresolved calls and named
 warnings. Appearance, audio or behavior may differ; do not claim exact or fully
-self-contained reproduction. Corrupt/unreadable structures, unsafe writes,
-invalid mandatory links and indispensable generation inputs stop the concrete
-operation. Body overlays remain deferred. The identified mouth conflict uses
+self-contained reproduction. Representable unresolved plugin links can be
+serialized with failed assessments and warnings; the plugin may fail to load.
+Host-safety protections still stop unsafe operations. Concrete inability to read
+required input or construct/write any deliverable after available recovery can
+also stop completion; not every input can produce output. Body overlays remain deferred. The identified mouth conflict uses
 the finished export's material with a warning; unrelated mismatches remain
 checked. Cached RaceMenu/Heels Fix lift is discarded while original footwear
 adjustment metadata remains for the runtime.
@@ -216,7 +219,7 @@ not public source. Editable code is in Gui/Foundation/Writer, Python stages
 in Stages, packagers in tools, and portrait/ICO in `assets/branding/icon-v2`.
 
 Keep `src/LICENSES.txt` and matching dependency-source access when redistributing.
-`Lazybones-Follower-Slopper-0.1.2-thirdparty-source.zip` contains dependency
+`Lazybones-Follower-Slopper-0.1.3-thirdparty-source.zip` contains dependency
 sources, full notices and binary/revision correspondence indexes. Published
 upstream binaries were not independently rebuilt; their own prerequisites
 apply. Mutagen upstream PreBuild deletes cache folders: use an isolated
@@ -224,7 +227,13 @@ upstream profile/cache. This guide adds no public release-packaging command
 or unattended follower-build interface.
 
 The Python native component metadata is in
-dependencies/python-native-components.json. The matching v0.1.2 thirdparty-source
+dependencies/python-native-components.json. The matching v0.1.3 thirdparty-source
 ZIP includes ctypes/libffi source, updated binary/component indexes and full
 notices alongside the existing dependency sources. Preserve that complete
 companion when redistributing application binaries.
+
+Builds finish with warnings when usable output can be written safely, including
+partial requested outputs or unresolved quality findings. Review Build details
+and the generated install instructions: warnings may mean appearance or gameplay
+defects, unavailable preset baking or assignment, or a plugin that cannot load.
+Failed checks remain failed; warnings do not establish in-game success.

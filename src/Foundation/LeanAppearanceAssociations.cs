@@ -4,15 +4,16 @@ namespace AutoFollower;
 
 public sealed record LeanAppearanceBinding(string Node,int ShapeBlock,int ShaderBlock,int TextureBlock,int Slot,string Reference,string Basis);
 public sealed record LeanMaterialConflict(string Node,int ShaderType,int SavedSlot,string SavedReference,int ExportedSlot,string ExportedReference,string Warning);
-public sealed record LeanAppearanceAssessment(LeanAppearanceBinding[] Bindings,LeanMaterialConflict[] Conflicts);
+public sealed record LeanAppearanceAssessment(LeanAppearanceBinding[] Bindings,LeanMaterialConflict[] Conflicts,BuildQualityWarning[]? QualityWarnings=null);
 public static class LeanAppearanceAssociations
 {
     public static LeanAppearanceBinding[] Bind(byte[] bytes,LeanSkeeState state)=>Assess(LeanExportInputs.ReadNif(bytes),state,false).Bindings;
-    public static LeanAppearanceAssessment Assess(LeanExportInputs.Nif nif,LeanSkeeState state,bool finishedMouthAuthority=true)
+    public static LeanAppearanceAssessment Assess(LeanExportInputs.Nif nif,LeanSkeeState state,bool finishedMouthAuthority=true,bool bestEffort=false)
     {
-        List<LeanAppearanceBinding> bindings=[];List<LeanMaterialConflict> conflicts=[];
+        List<LeanAppearanceBinding> bindings=[];List<LeanMaterialConflict> conflicts=[];List<BuildQualityWarning> quality=[];
         foreach(var node in state.Nodes){
             if(LeanOverlayPolicy.Deferred(node)||LeanRuntimeAssignmentPolicy.Omitted(node))continue;
+            try{
             if(node.Scope!="material"||node.Values.Any(v=>v.Key!=9||v.Type!=2||v.Index is <0 or >8))throw new InvalidDataException(node.Scope=="transform"
                 ? "Unsupported saved skeleton adjustment on '"+node.Registration+"' (registration '"+node.Node+"'). This adjustment cannot be reproduced safely yet. Keep these inputs for compatibility review, or choose another character."
                 : "Unsupported saved material operation on '"+node.Node+"' (keys "+string.Join(", ",node.Values.Select(v=>v.Key).Distinct())+"). Keep these inputs for compatibility review, or choose another character.");
@@ -41,14 +42,15 @@ public static class LeanAppearanceAssociations
                 }
                 bindings.Add(new(node.Node,shape,shader,texture,value.Index,expected,"Persisted SKEE key9 texture matches the same serialized exported material slot"));
             }
+            }catch(InvalidDataException e)when(bestEffort){quality.Add(BestEffortBuild.Finding("material-association",e.Message));}
         }
-        return new(bindings.ToArray(),conflicts.ToArray());
+        return new(bindings.ToArray(),conflicts.ToArray(),quality.ToArray());
     }
     static string Texture(string? path,string context)
     {
         if(string.IsNullOrEmpty(path))throw new InvalidDataException(context+": required texture is empty.");
         string value=path.Replace('\\','/');if(value.StartsWith("textures/",StringComparison.OrdinalIgnoreCase))value=value[9..];
         try{return VirtualPath.Normalize("textures/"+value);}
-        catch(InvalidDataException e){throw new InvalidDataException(context+": unsafe texture path '"+path+"'; "+e.Message,e);}
+        catch(InvalidDataException e){throw new HostProtectionException(context+": unsafe texture path '"+path+"'; "+e.Message,e);}
     }
 }

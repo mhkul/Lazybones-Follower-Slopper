@@ -11,6 +11,7 @@ _runtime_lease = open(PROJECT / 'runtime-use.lock', 'rb') if (PROJECT / 'runtime
 _storage_lease = None
 sys.path.insert(0, str(PROJECT / 'prototypes/T07'))
 sys.path.insert(0, str(PROJECT / 'prototypes/T02A'))
+from best_effort import HostProtectionError, QUALITY_ERRORS, finding, owned_path
 from nif_refs import Nif, Cursor, prove_only_references_changed
 from head_validate import head
 from follower_names import names
@@ -56,14 +57,15 @@ def bind_identities(model, bindings):
 def norm(value, field='texture'):
     if field == 'texture':
         from nif_refs import texture_reference
-        value = texture_reference(value)
+        try: value = texture_reference(value)
+        except ValueError as error: raise HostProtectionError('Unsafe creator texture reference') from error
     value = value.replace('\\', '/').strip()
-    if value.startswith('/'): raise ValueError('Rooted NIF reference')
+    if value.startswith('/'): raise HostProtectionError('Rooted NIF reference')
     while '//' in value: value=value.replace('//','/')
     if value.lower().startswith('data/'): value = value[5:]
     if field == 'texture' and not value.lower().startswith(('textures/', 'skse/')): value = 'textures/' + value
     if field == 'BODYTRI' and not value.lower().startswith('meshes/'): value = 'meshes/' + value
-    if ':' in value or any(p in ('', '.', '..') for p in value.split('/')): raise ValueError('Unsafe NIF reference')
+    if ':' in value or any(p in ('', '.', '..') for p in value.split('/')): raise HostProtectionError('Unsafe NIF reference')
     return value.lower()
 
 def run(plan_path):
@@ -77,36 +79,37 @@ def run(plan_path):
     if owner['kind'] != 'T09B lean export build': raise ValueError('Unowned output')
     def check():
         if (output / 'stop').exists(): raise InterruptedError('Owned build cancelled')
-    def owned(path):
-        path = Path(path)
-        if os.path.commonpath([output, path.resolve()]) != str(output): raise ValueError('Path escapes owned output')
-        current = path
-        while current != output:
-            if current.is_symlink() or (hasattr(current, 'is_junction') and current.is_junction()): raise ValueError('Owned path is a link')
-            current = current.parent
-        return path
+    def owned(path): return owned_path(output,path)
+    warnings=[]
+    def quality(stage, operation, fallback):
+        check()
+        try:return operation()
+        except QUALITY_ERRORS as error:
+            warnings.append(finding('head-quality',stage,error));return fallback
     check()
     sources = {norm(s['reference'], 'exact'): s for s in plan['sources']}
     missing = {norm(r['reference'], 'exact'):r for r in plan.get('missingReferences') or []}
     head_ref = 'meshes/lean-export/head.nif'
     original_path = owned(output / 'assets' / head_ref)
     original = original_path.read_bytes()
-    if hashlib.sha256(original).hexdigest().upper() != sources[head_ref]['sha256']: raise ValueError('Staged head changed')
+    if hashlib.sha256(original).hexdigest().upper() != sources[head_ref]['sha256']: raise HostProtectionError('Staged head changed')
     model = Nif(original)
     # Validate dynamic arrays and selected links before the private edit. The
     # helper does not decode all topology/skin semantics or establish appearance.
-    before = head(original_path)
+    before = quality('exported-head',lambda:head(original_path),dict(shapes=[],limits=['Head quality inspection unavailable']))
     namespace = names(plan, owner)['namespace']
     tint_ref = norm(plan['appearance']['tintReference'], 'exact')
     refs = {norm(r['value'], r['field']) for r in model.references() if r['value']}
-    physics = physics_inputs(plan, output, norm)
+    physics = quality('head-physics-inputs',lambda:physics_inputs(plan, output, norm),[])
     refs.update(p['xml'] for p in physics)
-    if tint_ref not in refs: raise ValueError('Composed tint is not called')
+    if tint_ref not in refs: warnings.append(finding('head-quality','tint-binding','Composed tint is not called'))
+    refs.add(tint_ref)
     mapping = {}
     choices = {r['reference']: r for r in plan.get('assetChoices', []) if r['layer'] == 'shared'}
     for ref in refs:
         if ref in missing: mapping[ref]=ref; continue
-        if ref not in sources: raise ValueError('Head dependency unresolved: ' + ref)
+        if ref not in sources:
+            warnings.append(finding('head-quality','head-dependency','Unresolved head dependency: '+ref));mapping[ref]=ref;continue
         if ref == tint_ref: target = 'textures/' + namespace + '/exports/tint.dds'
         elif choices.get(ref, {}).get('mode') == 'Retain dependency': target = ref
         else:
@@ -116,49 +119,58 @@ def run(plan_path):
         mapping[ref] = target
     # Filesystem/manifest keys use '/', but serialized Skyrim resources use '\\'.
     changes = model.rewrite(lambda r: r['value'] if not r['value'] or norm(r['value'],r['field']) in missing else mapping[norm(r['value'], r['field'])].replace('/', '\\'))
-    encoded = model.encode(); proof = prove_only_references_changed(original, encoded, changes)
+    encoded = model.encode(); proof = quality('head-reference-proof',lambda:prove_only_references_changed(original, encoded, changes),dict(passed=False,checksComplete=False))
+    def transform(stage,operation):
+        nonlocal model
+        prior=model.encode()
+        result=quality(stage,operation,None)
+        if result is None:model=Nif(prior);return dict(required=False,passed=False,runtimeVerified=False)
+        return result
     physics_proof = dict(required=False)
     if physics:
         ref=physics[0]['xml'];raw=owned(output/'assets'/sources[ref]['reference']).read_bytes()
-        if hashlib.sha256(raw).hexdigest().upper()!=sources[ref]['sha256']:raise ValueError('Staged SMP XML changed')
-        physics_proof=attach_physics(model,physics,raw,mapping[ref].replace('/','\\'));encoded=model.encode()
+        if hashlib.sha256(raw).hexdigest().upper()!=sources[ref]['sha256']:raise HostProtectionError('Staged SMP XML changed')
+        physics_proof=transform('head-physics',lambda:attach_physics(model,physics,raw,mapping[ref].replace('/','\\')));encoded=model.encode()
     bind_frames=dict(required=False,runtimeVerified=False)
     if physics and plan.get('followerSettings',{}).get('values',{}).get('raceMode','private')=='existing':
         skeleton_sources=[s for s in plan['sources'] if s.get('consumer')=='winning selected-sex race skeleton']
-        if len(skeleton_sources)!=1:raise ValueError('Retained SMP requires one captured winning race skeleton')
-        skeleton_source=skeleton_sources[0];skeleton_raw=owned(output/'assets'/skeleton_source['reference']).read_bytes()
-        if hashlib.sha256(skeleton_raw).hexdigest().upper()!=skeleton_source['sha256']:raise ValueError('Staged retained race skeleton changed')
-        bind_frames=restore_bind_frames(model,physics,Nif(skeleton_raw));encoded=model.encode()
-    identity_proof=bind_identities(model,plan.get('headIdentityBindings') or []);encoded=model.encode()
+        if len(skeleton_sources)!=1:
+            warnings.append(finding('head-quality','head-bind-frames','Retained SMP has no unique captured winning race skeleton; exported bind frames preserved'))
+            bind_frames=dict(required=True,passed=False,runtimeVerified=False)
+        else:
+            skeleton_source=skeleton_sources[0];skeleton_raw=owned(output/'assets'/skeleton_source['reference']).read_bytes()
+            if hashlib.sha256(skeleton_raw).hexdigest().upper()!=skeleton_source['sha256']:raise HostProtectionError('Staged retained race skeleton changed')
+            bind_frames=transform('head-bind-frames',lambda:restore_bind_frames(model,physics,Nif(skeleton_raw)));encoded=model.encode()
+    identity_proof=transform('head-identities',lambda:bind_identities(model,plan.get('headIdentityBindings') or []));identity_proof.setdefault('changes',[]);encoded=model.encode()
     shape_names=[model.strings[struct.unpack_from('<I',b)[0]].decode('utf-8') for k,b in zip(model.indices,model.blocks) if model.types[k] in ('BSDynamicTriShape','BSTriShape','NiTriShape','BSSubIndexTriShape')]
     for part in plan.get('retainedHeadClosure') or []:
-        if part['model'] and shape_names.count(part['outputShapeName'])!=1:raise ValueError('Retained race pregen name absent/ambiguous: '+part['outputShapeName'])
+        if part['model'] and shape_names.count(part['outputShapeName'])!=1:warnings.append(finding('head-quality','retained-head-identity','Retained race pregen name absent/ambiguous: '+part['outputShapeName']))
     target_ref = 'meshes/' + namespace + '/exports/head.nif'
     target_head = owned(output / 'private-head' / target_ref)
     target_head.parent.mkdir(parents=True, exist_ok=True)
     with target_head.open('xb') as stream: stream.write(encoded)
-    after = head(target_head)
+    after = quality('private-head',lambda:head(target_head),dict(shapes=[],limits=['Head quality inspection unavailable']))
     signature = lambda h: [(s['name'], s['vertices'], s['positionHash'], s['packedHash'], s['dynamicHash'], s['transform']) for s in h['shapes']]
     aliases={x['original']:x['replacement'] for x in identity_proof['changes']}
-    if [(aliases.get(s[0],s[0]),*s[1:]) for s in signature(before)] != signature(after): raise ValueError('Private head geometry changed')
+    if [(aliases.get(s[0],s[0]),*s[1:]) for s in signature(before)] != signature(after): warnings.append(finding('head-quality','head-geometry','Private head geometry assessment failed'))
     read_bytes = len(original) * 2 + len(encoded) + plan_path.stat().st_size + (output / 'owned-output.json').stat().st_size
     moved = []
     for ref, target in sorted(mapping.items()):
-        if ref in missing:continue
+        if ref in missing or ref not in sources:continue
         check(); source = sources[ref]; staged = owned(output / 'assets' / ref)
         with staged.open('rb') as stream: digest = hashlib.file_digest(stream, 'sha256').hexdigest().upper()
         read_bytes += staged.stat().st_size
-        if staged.stat().st_size != source['bytes'] or digest != source['sha256']: raise ValueError('Staged dependency changed: ' + ref)
+        if staged.stat().st_size != source['bytes'] or digest != source['sha256']: raise HostProtectionError('Staged dependency changed: ' + ref)
         if choices.get(ref, {}).get('mode') == 'Retain dependency': continue
         dest = owned(output / 'private-head' / target); dest.parent.mkdir(parents=True, exist_ok=True)
-        if dest.exists(): raise ValueError('Private head destination collision')
+        if dest.exists(): raise HostProtectionError('Private head destination collision')
         # Owned-stage rename avoids a second payload copy; original backing
         # inputs are never opened for writing or moved.
         os.rename(staged, dest)
         moved.append(dict(reference=ref, destination=target, bytes=source['bytes'], sha256=digest))
-    result = dict(status='partial-private-head', followerComplete=False, packages=[],
+    result = dict(buildWarnings=warnings,status='partial-private-head', followerComplete=False, packages=[],
                   head=target_ref, headSha256=hashlib.sha256(encoded).hexdigest().upper(), headBytes=len(encoded), tint=mapping[tint_ref], assets=moved, referenceProof=proof,
-                  dynamicShapes=len(after['shapes']), geometryPreserved=True,
+                  dynamicShapes=len(after['shapes']), geometryPreserved=not warnings,
                   headPhysics=physics_proof,
                   retainedSmpBindFrames=bind_frames,
                   headIdentity=identity_proof,

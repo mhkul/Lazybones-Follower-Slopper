@@ -10,7 +10,7 @@ public sealed record LeanEquipment(string Canonical,int Count,LeanAddon[] Addons
 public sealed record LeanHeadPhysicsModel(string Canonical,string EditorId,string Reference);
 public sealed record LeanInputPlan(string Schema,LeanActor SavedActor,LeanAppearance Appearance,
     LeanEquipment[] Equipment,object? Body,object[] Records,List<LeanSource> Sources,object InputPins,
-    List<LeanGap> Gaps,bool PlacementOriginInterior,int IndexHeaders,int ActivePlugins,bool LegacyCaptureReceiptRequired=false,LeanSkin? Skin=null,LeanSkeeState? PersistedAppearance=null,LeanAppearanceBinding[]? AppearanceBindings=null,object[]? HostResources=null,LeanAssetChoice[]? AssetChoices=null,ResolvedFollowerSettings? FollowerSettings=null,LeanOutputPlan? Outputs=null,LeanPlacement? Placement=null,LeanOverlayNotice? OverlayNotice=null,LeanMaterialConflict[]? MaterialConflicts=null,string[]? RuntimeAssignmentWarnings=null,LeanHeadMorphExclusion[]? HeadMorphExclusions=null,LeanHeadPhysicsModel[]? HeadPhysicsModels=null,LeanHeadIdentityBinding[]? HeadIdentityBindings=null,string[]? PrivateRaceRecords=null,string[]? PrivateSoundRecords=null,LeanHeadClosurePart[]? RetainedHeadClosure=null,string[]? AssetRepairWarnings=null,LeanEquipmentOmission[]? EquipmentOmissions=null,LeanMissingReference[]? MissingReferences=null);
+    List<LeanGap> Gaps,bool PlacementOriginInterior,int IndexHeaders,int ActivePlugins,bool LegacyCaptureReceiptRequired=false,LeanSkin? Skin=null,LeanSkeeState? PersistedAppearance=null,LeanAppearanceBinding[]? AppearanceBindings=null,object[]? HostResources=null,LeanAssetChoice[]? AssetChoices=null,ResolvedFollowerSettings? FollowerSettings=null,LeanOutputPlan? Outputs=null,LeanPlacement? Placement=null,LeanOverlayNotice? OverlayNotice=null,LeanMaterialConflict[]? MaterialConflicts=null,string[]? RuntimeAssignmentWarnings=null,LeanHeadMorphExclusion[]? HeadMorphExclusions=null,LeanHeadPhysicsModel[]? HeadPhysicsModels=null,LeanHeadIdentityBinding[]? HeadIdentityBindings=null,string[]? PrivateRaceRecords=null,string[]? PrivateSoundRecords=null,LeanHeadClosurePart[]? RetainedHeadClosure=null,string[]? AssetRepairWarnings=null,LeanEquipmentOmission[]? EquipmentOmissions=null,LeanMissingReference[]? MissingReferences=null,BuildQualityWarning[]? BuildWarnings=null);
 
 // Reuses bounded editors and package stages with the consumed compact plan.
 public static class LeanGenerationStage
@@ -36,7 +36,7 @@ public static class LeanGenerationStage
             StageFailureDiagnostics.Attach(exception,output,"package",child.ExitCode);
             throw exception;
         }
-        using var result=JsonDocument.Parse(File.ReadAllBytes(Path.Combine(output,"package-stage-result.json")));if(result.RootElement.GetProperty("status").GetString()!="structural-build-passed")throw new InvalidDataException("Package stage has no structural success receipt");
+        using var result=JsonDocument.Parse(File.ReadAllBytes(Path.Combine(output,"package-stage-result.json")));if(!BestEffortBuild.DeliveredStatus(result.RootElement.GetProperty("status").GetString()))throw new InvalidDataException("Package stage has no structural success receipt");
         WorkingStorage.PackageReady(output,result.RootElement.GetProperty("distribution"));
         return result.RootElement.Clone();
     }

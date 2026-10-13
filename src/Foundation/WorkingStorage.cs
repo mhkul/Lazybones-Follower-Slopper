@@ -90,7 +90,7 @@ public static class WorkingStorage
         // A stage-only/ambiguous ZIP is protected, but cannot be presented as
         // a completed follower without the builder's structural success.
         using var result = JsonDocument.Parse(ReadBytes(SafePaths.Below(attempt, "result.json"), (int)FileLimit));
-        if (result.RootElement.GetProperty("status").GetString() != "structural-build-passed") throw new IOException("Package retained; final build success is unconfirmed.");
+        if (!BestEffortBuild.DeliveredStatus(result.RootElement.GetProperty("status").GetString())) throw new IOException("Package retained; final build success is unconfirmed.");
         var distribution = result.RootElement.GetProperty("distribution");
         var package = ValidatePackage(attempt, distribution.GetProperty("path").GetString()!, distribution.GetProperty("sha256").GetString()!);
         string ready = SafePaths.Below(attempt, "package-ready.json");
@@ -143,7 +143,7 @@ public static class WorkingStorage
             if (File.Exists(resultPath))
             {
                 using var result = JsonDocument.Parse(ReadBytes(resultPath, (int)FileLimit));
-                if (result.RootElement.GetProperty("status").GetString() != "structural-build-passed") return false;
+                if (!BestEffortBuild.DeliveredStatus(result.RootElement.GetProperty("status").GetString())) return false;
                 var distribution = result.RootElement.GetProperty("distribution");
                 if (!Same(distribution.GetProperty("path").GetString()!, receipt.Path) || !string.Equals(distribution.GetProperty("sha256").GetString(), receipt.Sha256, StringComparison.OrdinalIgnoreCase)) return false;
             }

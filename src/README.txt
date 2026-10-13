@@ -1,4 +1,4 @@
-Lazybones Follower Slopper 0.1.2 — Windows x64
+Lazybones Follower Slopper 0.1.3 — Windows x64
 
 Create a follower install ZIP from a Skyrim save and matching RaceMenu head
 export. Extract outside game, mod and input folders. Open the EXE directly
@@ -14,6 +14,12 @@ and/or OBody NG (as-is) outputs. One produces a plain ZIP; both produce a FOMOD.
 Save ZIP to selects
 the delivery folder. Show ZIP in folder selects the finished ZIP. Cancel and
 wait; failed delivery can retry without rebuilding. Earlier ZIPs remain.
+
+Useful follower files complete as Built with warnings when output checks fail.
+Unresolved links remain intact; a failed preset bake may use captured meshes.
+The ZIP names unavailable requested variants and required repairs. This output
+may not load or work in Skyrim. Unsafe paths and unwritable destinations still
+prevent delivery. Failed assessments remain failed in the build details.
 
 Install the generated ZIP with your mod manager and read its dependency
 instructions. Use MO2 Replace when switching variants. OBody/PDA and RSV
@@ -32,8 +38,11 @@ copy. Body overlays remain deferred with warnings.
 Requested equipment and available proved assets can be retained through
 recoverable missing references with named warnings and safe original calls.
 Textures, reflections, audio or behavior may differ; read Build details.
-Indispensable generation inputs and invalid/unsafe structures still stop the
-operation. No missing provider or replacement is invented. Omission history
+Representable unresolved plugin links can be written with failed assessments
+and warnings. Unsafe operations or concrete inability to read required input
+or construct/write any deliverable after available recovery can stop completion.
+Not every input can produce output; no missing provider or replacement is
+invented. Omission history
 stays in builder details/local results, rather than installer history.
 
 Equipment/build Error report and Copy report remove identifying details by
@@ -67,7 +76,7 @@ days and 128 MiB, checked on startup and after builds. Active work, exports and
 pending ZIP delivery stay protected.
 Packages and retry inputs also survive an exit before pending state or the
 main result is written. Unconfirmed packages are retained; automatic recovery
-requires recorded final structural success. Verified external ZIP delivery,
+requires a recorded delivered result, including Built with warnings. Verified external ZIP delivery,
 not a missing pending flag, permits completed-package cleanup.
 Stale new owned runtimes are reclaimed after seven days or beyond two inactive
 caches/512 MiB (partial extraction
@@ -76,13 +85,19 @@ lease proof. Unknown legacy caches and .NET bootstrap extraction are retained.
 
 GPLv3, no warranty. Full terms/notices and asset-sharing responsibility:
 src/LICENSES.txt. Check asset permissions before distributing a follower.
-Keep matching Lazybones-Follower-Slopper-0.1.2-thirdparty-source.zip available
+Keep matching Lazybones-Follower-Slopper-0.1.3-thirdparty-source.zip available
 with the application and its source when redistributing. It contains exact
 dependency sources and correspondence indexes. Matching release files:
-https://github.com/mhkul/Lazybones-Follower-Slopper/releases/tag/v0.1.2
+https://github.com/mhkul/Lazybones-Follower-Slopper/releases/tag/v0.1.3
 Issue-reporting guide:
-https://github.com/mhkul/Lazybones-Follower-Slopper/blob/v0.1.2/docs/REPORTING_ISSUES.md
+https://github.com/mhkul/Lazybones-Follower-Slopper/blob/v0.1.3/docs/REPORTING_ISSUES.md
 
 References: https://www.gnu.org/licenses/gpl-3.0.html
 https://john95ac.github.io/website-documents-John95AC/OBody_NG_Preset_Distribution_Assistant_NG/index.html
 https://github.com/powerof3/Spell-Perk-Item-Distributor
+
+Builds finish with warnings when usable output can be written safely, including
+partial requested outputs or unresolved quality findings. Review Build details
+and the generated install instructions: warnings may mean appearance or gameplay
+defects, unavailable preset baking or assignment, or a plugin that cannot load.
+Failed checks remain failed; warnings do not establish in-game success.

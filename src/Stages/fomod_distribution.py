@@ -33,9 +33,13 @@ def _requirements(package):
     return lines
 
 def _description(package, variant):
+    if variant == 'prebuilt' and not package.get('presetBakeComplete',True):
+        return 'Uses available captured meshes where preset baking failed; see warnings.'
     if variant == 'prebuilt':
         return "Uses the captured preset's body shape without requiring OBody NG."
     elif variant == 'obody':
+        if not package.get('presetAvailable',True):
+            return 'Uses captured installed meshes; no assigned preset is included and automatic OBody assignment is unavailable.'
         return 'Uses your installed OBody NG with the included preset.'
     else:
         return 'Uses the captured body and outfits as they are.'
@@ -48,12 +52,18 @@ def _recipient_readme(package, variant, plugin, preset_name):
         route = 'Captured winning OBody body and outfit meshes with compatible morph files; the included preset is applied by compatible installed OBody NG.'
     else:
         route = 'Captured body and outfit meshes are included as-is. No preset or OBody variant is supplied.'
+    if variant=='prebuilt' and not package.get('presetBakeComplete',True): route='Requested XML preset bake was not completed for all targets. Available captured installed meshes are included for those targets; their shape may differ and OBody may be needed.'
+    if variant=='obody' and not package.get('presetAvailable',True): route='Captured installed meshes are preserved. No valid assigned preset could be packaged; automatic OBody assignment is unavailable.'
     lines = [
         'Generated follower package: ' + plugin.removesuffix('.esp') + '.',
         '', route,
         'The selected RaceMenu head NIF, composed tint and JSlot were used with the selected save/co-save. Their association is explicit and has no unique save/session binding; runtime behavior is not verified.',
         'Required plugin masters: ' + (', '.join(package.get('requiredMasters', [])) or 'none listed.'),
     ]
+    if package.get('buildWarnings'):
+        lines += ['', 'Built with warnings. Failed assessments remain failed. This follower may not load or work in Skyrim.']
+        lines.extend(dict.fromkeys(row['warning'] for row in package['buildWarnings']))
+        lines.extend('Unavailable requested variant: '+row['stage']+'.' for row in package['buildWarnings'] if row.get('category')=='variant-unavailable' and row.get('stage') in ('prebuilt','obody','as-is'))
     mode=(package.get('followerSettings') or {}).get('values',{}).get('raceMode','private')
     if mode=='existing':
         lines.append('Race: Use existing captured race; its installed race plugin and skeleton provider are required; no skeleton packaged.')
@@ -104,7 +114,7 @@ def _recipient_readme(package, variant, plugin, preset_name):
         lines.append(compatibility['switching'])
     return ('\n'.join(lines) + '\n').encode('utf-8')
 
-def build_fomod(package_root: Path, variants: dict[str, dict[str, bytes]], packages: list[dict], plugin: str, identity: str, obody: bool, preset_name: str | None, mod_name: str | None = None):
+def build_fomod(package_root: Path, variants: dict[str, dict[str, bytes]], packages: list[dict], plugin: str, identity: str, obody: bool, preset_name: str | None, mod_name: str | None = None, before_write=None):
     started = time.monotonic()
     expected = {'prebuilt', 'obody'} if obody else {'as-is'}
     if set(variants) != expected or {p['variant'] for p in packages} != expected:
@@ -135,6 +145,11 @@ def build_fomod(package_root: Path, variants: dict[str, dict[str, bytes]], packa
         ]
         mapped['docs/Provenance.txt'] = ('\n'.join(provenance) + '\n').encode('utf-8')
         maps[variant] = mapped
+    if before_write:
+        before_write(maps)
+        for package in packages:
+            variant=package['variant']
+            maps[variant]['README-T08.txt']=_recipient_readme(package,variant,plugin,preset_name)
     common = {}
     if obody:
         for name, data in maps['prebuilt'].items():
@@ -153,7 +168,7 @@ def build_fomod(package_root: Path, variants: dict[str, dict[str, bytes]], packa
     if obody:
         docs += [
         'To change body routes, reinstall this same generated mod in MO2 and explicitly choose Replace. Merge can leave files exclusive to the previous route, including its preset or morph files. Replacing files does not reset morph values already stored in an existing save.',
-        'For an OBody NG route, use the installed OBody facilities and the included assigned preset. Existing-save switching, reset and migration behavior are not verified; no automatic migration is provided.',
+        ('For an OBody NG route, use the installed OBody facilities and the included assigned preset.' if preset_name else 'No assigned preset is included; automatic OBody assignment is unavailable. Captured installed meshes remain available.')+' Existing-save switching, reset and migration behavior are not verified; no automatic migration is provided.',
         ]
     else:
         docs += [
@@ -216,7 +231,7 @@ def build_fomod(package_root: Path, variants: dict[str, dict[str, bytes]], packa
     return {'primary':True, 'path':str(path), 'sha256':digest, 'bytes':path.stat().st_size, 'members':len(entries), 'branchCount':len(ordered), 'payloadFiles':len(common)+sum(len(exclusive[v]) for v in ordered), 'payloadBytes':payload_bytes, 'additionalSourceFilesRead':0, 'additionalSourceBytesRead':0, 'additionalStagedCopies':0, 'branches':[{ 'variant':v, 'default':v=='prebuilt' if obody else True, 'installedMembers':len(maps[v])+1, 'installedBytes':branch_bytes[v], 'commonMembers':len(common), 'exclusiveMembers':len(exclusive[v]), 'classification':next(p['classification'] for p in packages if p['variant']==v), 'retainedDependencies':next(p['retainedDependencies'] for p in packages if p['variant']==v), 'requiredMasters':next(p['requiredMasters'] for p in packages if p['variant']==v), 'hostRequirements':next(p['hostRequirements'] for p in packages if p['variant']==v)} for v in ordered], 'elapsedMilliseconds':int((time.monotonic()-started)*1000), 'runtimeVerified':False, 'branchMaps':maps}
 
 
-def build_plain(package_root, variants, packages, plugin, identity, preset_name, mod_name=None):
+def build_plain(package_root, variants, packages, plugin, identity, preset_name, mod_name=None, before_write=None):
     started = time.monotonic()
     if len(variants)!=1 or len(packages)!=1 or packages[0]['variant'] not in variants: raise ValueError('Plain ZIP requires exactly one selected variant')
     variant, payload = next(iter(variants.items()))
@@ -235,6 +250,9 @@ def build_plain(package_root, variants, packages, plugin, identity, preset_name,
     entries['docs/Provenance.txt']=('Generated from the selected save/co-save, RaceMenu export bundle and resolved sources in the selected installed Data view.\n'
         'Included source providers: '+', '.join(providers)+'.\n'
         'This package grants no permission to redistribute upstream assets. Follow each source mod’s permissions and attribution requirements.\n').encode('utf-8')
+    if before_write:
+        before_write({variant:entries})
+        entries['README-T08.txt']=_recipient_readme(package,variant,plugin,preset_name)
     path=package_root/((mod_name or 'AutoFollower_'+identity)+'_'+variant+'.zip')
     with zipfile.ZipFile(path,'x',zipfile.ZIP_DEFLATED,compresslevel=6) as archive:
         for name,raw in sorted(entries.items()): archive.writestr(name,raw)

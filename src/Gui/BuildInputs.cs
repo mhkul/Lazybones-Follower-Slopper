@@ -36,9 +36,9 @@ internal static class BuildInputs
     {
         if (!ObodyAvailable(setup)) return [];
         if(preview.Cosave.Preset==null&&preview.Cosave.ObodyAssignment=="unassigned")return [];
-        string name = preview.Cosave.Preset ?? throw new InvalidDataException("OBody is installed, but the selected co-save has no supported player preset assignment.");
+        string? name = preview.Cosave.Preset;if(name==null)return [];
         string root = Path.Combine(setup.Game, "Data", "CalienteTools", "BodySlide", "SliderPresets");
-        if (!Directory.Exists(root)) throw new InvalidDataException("The assigned OBody preset folder is missing in the selected MO2 environment.");
+        if (!Directory.Exists(root)) return [];
         var mo2=setup.Mo2;
         var values=mo2==null?new Dictionary<string,string>():ActiveMo2.ParseIni(File.ReadAllText(mo2.InstanceIni));
         string mods = (values.GetValueOrDefault("Settings/mod_directory") ?? Path.Combine((mo2?.BaseDirectory??setup.Game), "mods")).Replace("%BASE_DIR%", (mo2?.BaseDirectory??setup.Game), StringComparison.OrdinalIgnoreCase);
@@ -54,7 +54,7 @@ internal static class BuildInputs
             string backing = LeanMo2Sources.Backing(file); SafePaths.NoLinks(backing);
             byte[] raw = new byte[checked((int)file.Length)]; file.ReadExactly(raw);
             searchFiles++; searchBytes += raw.Length;
-            if (!ContainsPreset(raw, name, Path.GetFileName(path))) continue;
+            try{if (!ContainsPreset(raw, name, Path.GetFileName(path))) continue;}catch(InvalidDataException){continue;}
             string ProviderBelow(string basePath)
             {
                 string prefix = Path.TrimEndingDirectorySeparator(Path.GetFullPath(basePath)) + Path.DirectorySeparatorChar;
@@ -65,7 +65,8 @@ internal static class BuildInputs
             if (provider.Length == 0) provider = ProviderBelow(overwrite).Length > 0 ? "MO2 Overwrite" : ProviderBelow(Path.Combine(setup.Game, "Data")).Length > 0 ? "Game Data" : throw new InvalidDataException("Preset backing is outside the selected environment: " + backing);
             matches.Add(new(path, backing, provider, name, BoundedBinary.Digest(raw)));
         }
-        if (matches.Count == 0) throw new InvalidDataException("The assigned OBody preset “" + name + "” has no authored XML in the selected MO2 environment.");
+        // Missing authored XML is recorded by the builder; available installed meshes can still be delivered.
+
         return matches.OrderBy(x => x.Path, StringComparer.OrdinalIgnoreCase).Select(x => x with { SearchFiles = searchFiles, SearchBytes = searchBytes, SearchMilliseconds = clock.ElapsedMilliseconds }).ToArray();
     }
 

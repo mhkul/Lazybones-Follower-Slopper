@@ -4,6 +4,7 @@ Host race-system fields require a separate exact evidence ledger; they never
 waive a missing ground model. Explicitly unresolved inherited host fields limit
 complete-reference acceptance even when included equipment closure passes.
 """
+from best_effort import HostProtectionError, QUALITY_ERRORS
 from pathlib import Path
 import argparse,hashlib,json,re,sys,zipfile
 sys.dont_write_bytecode=True
@@ -18,11 +19,16 @@ from package_content import audit
 def normalize(value):
     value=value.replace('\\','/').lower()
     if value.startswith('/') or ':' in value or any(q in ('','..','.') for q in value.split('/')):
-        raise ValueError('Unsafe asset reference '+value)
+        raise HostProtectionError('Unsafe asset reference '+value)
     return value
 
 
-def validate_members(data,plugin,uuid,variant,host_resources=(),retained=(),retained_data=None,*,require_compatibility=False,missing_references=()):
+def validate_members(data,plugin,uuid,variant,host_resources=(),retained=(),retained_data=None,*,require_compatibility=False,missing_references=(),best_effort=False):
+    findings=[]
+    def check(value,reason):
+        if value:return
+        if not best_effort:raise ValueError(reason)
+        findings.append(reason)
     content=audit(list(data),plugin,uuid,variant)
     # D115 scoped INIs are checked against actual generated record/XML bytes.
     # Historical packages without these files retain their historical audit path.
@@ -68,12 +74,12 @@ def validate_members(data,plugin,uuid,variant,host_resources=(),retained=(),reta
             part=by_id[int.from_bytes(raw,'little')];pf=list(fields(part));assert part['tag']=='HDPT'
             if any(t=='MODL' and value.lower().endswith(b'.nif\0') for t,value in pf):
                 editor=next(value.rstrip(b'\0').decode() for t,value in pf if t=='EDID')
-                if shape_names.count(editor)!=1:raise ValueError('Primary HDPT/export shape identity mismatch: '+editor)
+                check(shape_names.count(editor)==1,'Primary HDPT/export shape identity mismatch: '+editor)
     prefix=f'meshes/autofollower/{uuid}/'
     # The generated follower's stable local identity consumes these actual exports.
     for face in (f'meshes/actors/character/FaceGenData/FaceGeom/{plugin}/00000800.nif',
                  f'textures/actors/character/FaceGenData/FaceTint/{plugin}/00000800.dds'):
-        if normalize(face) not in members:raise ValueError('Missing required FaceGen export: '+face)
+        check(normalize(face) in members,'Missing required FaceGen export: '+face)
     def require(origin,value,category,private=False):
         ref=normalize(value)
         if not ref.startswith(('meshes/','textures/','sound/')):ref=category+'/'+ref
@@ -82,22 +88,26 @@ def validate_members(data,plugin,uuid,variant,host_resources=(),retained=(),reta
         if ref in external:
             ledger.append(dict(origin=origin,reference=ref,status='Retained dependency',provider=external[ref]['authority']))
         else:
-            if private and not ref.startswith(prefix):raise ValueError('Ground model not isolated or explicitly retained: '+origin+' -> '+ref)
-            if ref not in members:raise ValueError('Missing required asset: '+origin+' -> '+ref)
-            ledger.append(dict(origin=origin,reference=ref,member=members[ref],status='Packaged'))
+            check(not private or ref.startswith(prefix),'Ground model not isolated or explicitly retained: '+origin+' -> '+ref)
+            check(ref in members,'Missing required asset: '+origin+' -> '+ref)
+            ledger.append(dict(origin=origin,reference=ref,member=members.get(ref),status='Packaged' if ref in members else 'Unavailable; original reference preserved'))
     calls=ground_calls(mod)
     for call in calls:
         require(f"{call['recordTag']} {call['recordId']:08X}.{call['field']}",call['reference'],'meshes',True)
         for alt in call['alternateTextures']:
             if not any(r['tag']=='TXST' and r['id']==alt['textureSet'] for r in mod['records']):
-                raise ValueError('Ground alternate TXST absent from plugin')
+                check(False,'Ground alternate TXST absent from plugin')
     material_bindings=[];unavailable_materials=[]
     for ref in sorted({c['reference'].replace('\\','/').lower() for c in calls}):
         if not any(c['reference'].replace('\\','/').lower()==ref and (c['recordTag']=='ARMO' or c['alternateTextures']) for c in calls):continue
         if ref in missing:
             unavailable_materials.append(dict(reference=ref,status='Material/shape comparison unavailable because the called mesh is missing',evidence=missing[ref]));continue
-        _,proof=effective_overrides(ref,external_bytes[ref] if ref in external else data[members[ref]],calls,mod)
-        if any(p['shapeNameCorrection'] for p in proof):raise ValueError('Ground alternate texture shape does not match packaged NIF: '+ref)
+        if ref not in external and ref not in members:
+            check(False,'Ground material check unavailable: '+ref);continue
+        try: _,proof=effective_overrides(ref,external_bytes[ref] if ref in external else data[members[ref]],calls,mod)
+        except QUALITY_ERRORS as error:
+            check(False,'Ground material check failed: '+str(error));continue
+        check(not any(p['shapeNameCorrection'] for p in proof),'Ground alternate texture shape does not match packaged NIF: '+ref)
         material_bindings.extend(proof)
     # Signature meanings are interpreted by record type; ARMO MODL is a FormID.
     host_fields=[]
@@ -127,7 +137,8 @@ def validate_members(data,plugin,uuid,variant,host_resources=(),retained=(),reta
                     require(origin,ref,'meshes')
                 else:
                     evidence=host.get(ref)
-                    if evidence is None:raise ValueError('Unclassified race-system field '+ref)
+                    if evidence is None:
+                        check(False,'Unclassified race-system field '+ref);continue
                     if not evidence.get('authority') and not evidence.get('inheritedVanillaField'):
                         raise ValueError('Host classification lacks provider or vanilla-record evidence '+ref)
                     host_fields.append(dict(origin=origin,reference=ref,evidence=evidence))
@@ -136,13 +147,13 @@ def validate_members(data,plugin,uuid,variant,host_resources=(),retained=(),reta
         for edge in Nif(raw).references():
             category='textures' if edge['field']=='texture' else 'meshes'
             ref=normalize(edge['value']);ref=ref if ref.startswith(('meshes/','textures/')) else category+'/'+ref
-            if normalize(name) in external and ref not in external and ref not in missing:raise ValueError('Retained NIF has unselected external reference: '+name+' -> '+ref+'; retain this dependency or package the NIF')
+            check(not (normalize(name) in external and ref not in external and ref not in missing),'Retained NIF has unselected external reference: '+name+' -> '+ref)
             require(f"NIF {name} block {edge['block']}.{edge['field']}",edge['value'],category)
-    return dict(passed=True,groundClosurePassed=True,groundCalls=calls,uniqueGroundModels=len({normalize(c['reference']) for c in calls}),
+    return dict(passed=not findings,qualityFindings=findings,checksComplete=True,groundClosurePassed=not findings,groundCalls=calls,uniqueGroundModels=len({normalize(c['reference']) for c in calls}),
         contentAudit=content,referenceLedger=ledger,groundMaterialBindings=material_bindings,unavailableGroundMaterialChecks=unavailable_materials,hostSystemFields=host_fields,
         retainedReferences=sorted({r['reference'] for r in ledger if r['status']=='Retained dependency'}),
         missingReferences=[r for r in ledger if r['status']=='Missing; original reference preserved'],
-        completeReferenceClosure=not any(r['status']=='Missing; original reference preserved' for r in ledger) and all(r['evidence']['status']=='Resolved' for r in host_fields),runtimeVerified=False,**({'compatibility':compatibility} if compatibility is not None else {}))
+        completeReferenceClosure=not findings and not any(r['status']=='Missing; original reference preserved' for r in ledger) and all(r['evidence']['status']=='Resolved' for r in host_fields),runtimeVerified=False,**({'compatibility':compatibility} if compatibility is not None else {}))
 
 
 def validate_zip(path,variant,hosts=(),retained=(),retained_data=None):

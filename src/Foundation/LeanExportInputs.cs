@@ -6,7 +6,7 @@ namespace AutoFollower;
 public sealed record LeanCosave(PluginTable Plugins,string? Preset,bool PersistedNodeMaterials,LeanSkeeState Skee,string ObodyAssignment="unavailable",uint ProducerSkse=0,uint ProducerRuntime=0);
 public sealed record LeanAppearance(double Weight,uint HairColor,JsonElement HeadParts,
     JsonElement FaceTextures,JsonElement DefaultMorphs,JsonElement TintLighting,
-    string[] HeadDependencies,string TintReference,int DynamicHeadShapes,string Association);
+    string[] HeadDependencies,string TintReference,int DynamicHeadShapes,string Association,BuildQualityWarning[]? QualityWarnings=null);
 
 public static class LeanExportInputs
 {
@@ -55,19 +55,21 @@ public static class LeanExportInputs
             :"The selected head calls more than one RaceMenu composed tint texture. The correct tint binding is ambiguous; choose a supported matching export bundle.");
         return candidates[0];
     }
-    public static LeanAppearance Bundle(byte[] nif,byte[] dds,byte[] jslot,LeanSavedState saved,string tintReference,string declaration)
+    public static LeanAppearance Bundle(byte[] nif,byte[] dds,byte[] jslot,LeanSavedState saved,string tintReference,string declaration,bool bestEffort=false)
     {
         if(string.IsNullOrWhiteSpace(declaration))throw new InvalidDataException("Declare that exports match the selected character/save/environment");
-        return Bundle(ReadNif(nif),dds,jslot,saved,tintReference,declaration);
+        return Bundle(ReadNif(nif),dds,jslot,saved,tintReference,declaration,bestEffort);
     }
-    public static LeanAppearance Bundle(Nif head,byte[] dds,byte[] jslot,LeanSavedState saved,string tintReference,string declaration)
+    public static LeanAppearance Bundle(Nif head,byte[] dds,byte[] jslot,LeanSavedState saved,string tintReference,string declaration,bool bestEffort=false)
     {
         if(string.IsNullOrWhiteSpace(declaration))throw new InvalidDataException("Declare that exports match the selected character/save/environment");
-        if(head.BsVersion!=100||head.DynamicShapes==0)throw new InvalidDataException("Head export requires SSE BS100 dynamic head shapes");
+        List<BuildQualityWarning> quality=[];
+        void Check(bool value,string detail){if(value)return;if(!bestEffort)throw new InvalidDataException(detail);quality.Add(BestEffortBuild.Finding("export-quality",detail));}
+        Check(head.BsVersion==100&&head.DynamicShapes>0,"Head export has no supported SSE dynamic head shapes");
         var d=new BoundedBinary(dds);if(Encoding.ASCII.GetString(d.Take(4))!="DDS "||d.U32()!=124)throw new InvalidDataException("Tint DDS framing invalid");
         uint[] h=Enumerable.Range(0,30).Select(_=>d.U32()).ToArray();uint height=h[1],width=h[2];
-        if(width==0||height==0||width>8192||height>8192||h[5]!=1||h[17]!=32||h[18]!=65||h[19]!=0||h[20]!=32||h[21]!=255||h[22]!=65280||h[23]!=16711680||h[24]!=4278190080||h[3]!=width*4||d.Remaining!=checked(width*height*4))throw new InvalidDataException("Supported composed tint is one-mip RGBA8 DDS");
-        string tint=VirtualPath.Normalize(tintReference);if(head.Dependencies.Count(x=>x.Equals(tint,StringComparison.OrdinalIgnoreCase))!=1)throw new InvalidDataException("Selected tint reference is not called by the head NIF");
+        if(width==0||height==0||width>8192||height>8192||h[5]!=1||h[17]!=32||h[18]!=65||h[19]!=0||h[20]!=32||h[21]!=255||h[22]!=65280||h[23]!=16711680||h[24]!=4278190080||h[3]!=width*4||d.Remaining!=checked(width*height*4)){Check(false,"Composed tint differs from the supported one-mip RGBA8 DDS layout; original bytes preserved");}
+        string tint=VirtualPath.Normalize(tintReference);if(head.Dependencies.Count(x=>x.Equals(tint,StringComparison.OrdinalIgnoreCase))!=1){Check(false,"Selected tint reference is not called by the head NIF; supplied bytes preserved");}
         using var doc=JsonDocument.Parse(jslot);var slot=doc.RootElement;var actor=slot.GetProperty("actor");double weight=actor.GetProperty("weight").GetDouble();if(!double.IsFinite(weight)||weight<0||weight>100)throw new InvalidDataException("JSlot weight invalid");uint color=actor.GetProperty("hairColor").GetUInt32();
         // RaceMenu's "type" is its partList index, not HDPT PNAM. Actual
         // Atae ESS and JSlot arrays have different orders. Match unique saved
@@ -80,7 +82,7 @@ public static class LeanExportInputs
         }if(indices.Count==0)throw new InvalidDataException("JSlot head parts absent");
         var textures=slot.GetProperty("faceTextures");HashSet<int> slots=[];foreach(var texture in textures.EnumerateArray()){int index=texture.GetProperty("index").GetInt32();if(index<0||index>8||!slots.Add(index))throw new InvalidDataException("JSlot face-texture slots invalid");VirtualPath.Normalize(texture.GetProperty("texture").GetString()??"");}
         var morphs=slot.GetProperty("morphs").GetProperty("default");var tintInfo=slot.GetProperty("tintInfo");var skinTints=tintInfo.EnumerateArray().Where(x=>x.GetProperty("index").GetInt32()==0).ToArray();if(skinTints.Length!=1)throw new InvalidDataException("JSlot needs one unambiguous skin tint entry 0");skinTints[0].GetProperty("color").GetUInt32();VirtualPath.Normalize(skinTints[0].GetProperty("texture").GetString()??"");
-        if(actor.TryGetProperty("headTexture",out var ht)&&!string.Equals(ht.GetString(),saved.Actor.FaceTextureSet,StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("JSlot face TXST contradicts saved face");
-        return new(weight,color,JsonSerializer.SerializeToElement(resolvedParts),textures.Clone(),morphs.Clone(),skinTints[0].Clone(),head.Dependencies,tint,head.DynamicShapes,declaration+"; ordinary exports contain no unique ESS/session binding");
+        if(actor.TryGetProperty("headTexture",out var ht)&&!string.Equals(ht.GetString(),saved.Actor.FaceTextureSet,StringComparison.OrdinalIgnoreCase)){Check(false,"JSlot face TXST contradicts saved face; actual selected data preserved");}
+        return new(weight,color,JsonSerializer.SerializeToElement(resolvedParts),textures.Clone(),morphs.Clone(),skinTints[0].Clone(),head.Dependencies,tint,head.DynamicShapes,declaration+"; ordinary exports contain no unique ESS/session binding",quality.ToArray());
     }
 }

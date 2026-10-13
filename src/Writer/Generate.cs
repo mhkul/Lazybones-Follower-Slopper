@@ -11,7 +11,8 @@ using AutoFollower;
 static class Generate {
  static readonly JsonSerializerOptions JsonOptions=new(){WriteIndented=true};
  static FormKey K(string plugin,uint id)=>new(ModKey.FromFileName(plugin),id);
- public static void Run(string assetPath,string inputsPath,string output) {
+ public static void Run(string assetPath,string inputsPath,string output,bool bestEffort=false) {
+  var buildWarnings=new List<BuildQualityWarning>();
   if(Directory.Exists(output))throw new InvalidOperationException("Unique output required");
   Directory.CreateDirectory(output);
   var m=JsonDocument.Parse(File.ReadAllText(assetPath)).RootElement;
@@ -26,12 +27,13 @@ static class Generate {
   if(lean&&actor.GetProperty("sex").GetInt32() is not (0 or 1))throw new Exception("Unsupported saved actor sex");
   var inp=JsonDocument.Parse(File.ReadAllText(inputsPath)).RootElement;
   var sources=new Dictionary<FormKey,IMajorRecordGetter>();
+  var sourceProviders=new Dictionary<FormKey,ModKey>();
   var owners=new List<IDisposable>();
   var sourcePaths=new Dictionary<ModKey,string>();
   foreach(var ov in inp.GetProperty("overlays").EnumerateArray()) {
    var mod=SkyrimMod.CreateFromBinaryOverlay(ov.GetProperty("overlay").GetProperty("path").GetString()!,SkyrimRelease.SkyrimSE);owners.Add(mod);
    sourcePaths[mod.ModKey]=ov.GetProperty("source").GetString()!;
-   foreach(var rec in mod.EnumerateMajorRecords())sources.Add(rec.FormKey,rec);
+   foreach(var rec in mod.EnumerateMajorRecords()){sources.Add(rec.FormKey,rec);sourceProviders.Add(rec.FormKey,mod.ModKey);}
   }
   var plugin=ModKey.FromFileName(m.GetProperty("pluginIdentity").GetString()!);
   string Label(string role,string? name=null,uint? local=null)=>ReadableIds.For(plugin.FileName.String,role,name,local);
@@ -54,6 +56,7 @@ static class Generate {
    var normalized=Norm(value);if(normalized.StartsWith(category+"/"))normalized=normalized[(category.Length+1)..];
    if(paths.TryGetValue(category+"/"+normalized,out var path))return path[(category.Length+1)..].Replace('/','\\');
    if(missingReferences.Contains(category+"/"+normalized))return normalized.Replace('/', '\\');
+   if(bestEffort){VirtualPath.Normalize(category+"/"+normalized);buildWarnings.Add(BestEffortBuild.Finding("asset-reference","Uncaptured required asset: "+category+"/"+normalized,"asset-quality","A called asset is unavailable. The safe original reference is preserved; appearance or behavior may differ."));return normalized.Replace('/', '\\');}
    throw new Exception("Uncaptured required asset: "+category+"/"+normalized);
   }
   Model? ModelCopy(IModelGetter? model) {
@@ -324,11 +327,29 @@ static class Generate {
   if(!dst.EnumerateMajorRecords().Where(r=>r.FormKey.ModKey==plugin).Select(r=>r.FormKey.ID).Order().SequenceEqual(registered))throw new Exception("Stable ID registry requires an explicit allocation amendment");}
   string DependencyReason(IMajorRecord r,FormKey target)=>r is Race rr&&rr.ActorEffect?.Any(e=>e.FormKey==target)==true?"Captured race ability (SPLO); original gameplay/effect dependencies remain installed":existingRace&&target==selectedRace?"Captured existing race and its installed behavior/skeleton are required":"Required "+r.GetType().Name+" link; preserve original behavior, material or compatibility";
   var dependencies=dst.EnumerateMajorRecords().SelectMany(r=>r.EnumerateFormLinks().Where(l=>!l.FormKey.IsNull&&l.FormKey.ModKey!=plugin).Select(l=>new {record=r.FormKey.ToString(),type=r.GetType().Name,target=l.FormKey.ToString(),master=l.FormKey.ModKey.FileName.String,reason=DependencyReason(r,l.FormKey)})).ToArray();
-  var masters=dependencies.Select(d=>d.master).Concat(resolvedPlacement?.Masters??new[]{"Skyrim.esm"}).Distinct().OrderBy(x=>x=="Skyrim.esm"?0:1).ThenBy(x=>x).ToArray();
-  dst.BeginWrite.ToPath(Path.Combine(output,plugin.FileName)).WithLoadOrder(masters.Select(x=>ModKey.FromFileName(x)).Append(plugin)).WithDataFolder(SelectedMaster.HeaderFolder(inp,masters)).Write();
+  var keywordProviders=new List<object>();var providerMasters=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+  if(lean)foreach(var link in dst.EnumerateMajorRecords().SelectMany(r=>r.EnumerateFormLinks()).Where(l=>!l.FormKey.IsNull&&l.FormKey.ModKey!=plugin&&l.Type==typeof(IKeywordGetter)).DistinctBy(l=>l.FormKey)){
+   // Captured winning keywords retain their identity and their actual host.
+   // Older compact inputs may prove an ordinary keyword in its origin only;
+   // they cannot discover an injected provider by searching unrelated plugins.
+   ModKey provider=link.FormKey.ModKey;
+   if(sources.TryGetValue(link.FormKey,out var source)){
+    if(source is not IKeywordGetter){if(!bestEffort)throw new InvalidDataException("Captured keyword has wrong record type: "+link.FormKey);buildWarnings.Add(BestEffortBuild.Finding("keyword-provider","Captured keyword has wrong record type: "+link.FormKey,"plugin-quality","A keyword provider check failed. The original keyword link remains; behavior or loading may fail."));continue;}
+    provider=sourceProviders[link.FormKey];
+   }
+   bool providerVerified=false;
+   try{using var host=SkyrimMod.CreateFromBinaryOverlay(SelectedMaster.Require(inp,provider.FileName.String),SkyrimRelease.SkyrimSE);providerVerified=host.ModKey==provider&&host.Keywords.Any(k=>k.FormKey==link.FormKey&&!k.IsDeleted);}
+   catch(Exception e)when(bestEffort && e is InvalidDataException or FileNotFoundException or DirectoryNotFoundException){buildWarnings.Add(BestEffortBuild.Finding("keyword-provider",e.Message,"plugin-quality","A keyword provider could not be verified. Its original link remains; behavior or loading may fail."));}
+   if(!providerVerified){if(!bestEffort)throw new InvalidDataException("Required selected keyword provider is absent or has changed: "+link.FormKey+" from "+provider);buildWarnings.Add(BestEffortBuild.Finding("keyword-provider","Unresolved keyword "+link.FormKey+" from "+provider,"plugin-quality","A keyword provider check failed. The original keyword link remains; behavior or loading may fail."));}
+   if(provider!=link.FormKey.ModKey){providerMasters.Add(provider.FileName.String);keywordProviders.Add(new{target=link.FormKey.ToString(),provider=provider.FileName.String,reason="Captured winning injected keyword; preserve identity and required defining provider"});}
+  }
+  var required=dependencies.Select(d=>d.master).Concat(resolvedPlacement?.Masters??new[]{"Skyrim.esm"}).Concat(providerMasters).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x=>x=="Skyrim.esm"?0:1).ThenBy(x=>x);
+  var masters=lean?SelectedMaster.DependencyOrder(inp,required,bestEffort,buildWarnings):required.ToArray();
+  foreach(string master in masters)dst.ModHeader.MasterReferences.Add(new MasterReference{Master=ModKey.FromFileName(master)});
+  dst.BeginWrite.ToPath(Path.Combine(output,plugin.FileName)).WithLoadOrder(masters.Select(x=>ModKey.FromFileName(x)).Append(plugin)).WithDataFolder(SelectedMaster.HeaderFolder(inp,masters,bestEffort)).NoMastersListContentCheck().Write();
   PartialCell.Trim(Path.Combine(output,plugin.FileName),cell.FormKey,resolvedPlacement?.Worldspace==null?null:Canonical(resolvedPlacement.Worldspace));
   if(lean)SavedTransform.Preserve(Path.Combine(output,plugin.FileName),new[]{"position","rotation"}.SelectMany(k=>placement.GetProperty(k).EnumerateArray().Select(x=>x.GetSingle())).ToArray());
-  File.WriteAllText(Path.Combine(output,"records.json"),JsonSerializer.Serialize(new{plugin=plugin.FileName.String,npcLocalId=0x800,referenceLocalId=0x801,raceLocalId=existingRace?(int?)null:0x802,raceMode=existingRace?"existing":"private",outputRace=outputRace.ToString(),skinLocalId=0x803,masters,notes,dependencies,recordMap=map.Select(p=>new{source=p.Key.ToString(),target=p.Value.ToString()}),records=dst.EnumerateMajorRecords().Select(r=>new{type=r.GetType().Name,id=r.FormKey.ID,editor=r.EditorID,links=r.EnumerateFormLinks().Select(l=>l.FormKey.ToString()).Distinct().ToArray()})},JsonOptions));
+  File.WriteAllText(Path.Combine(output,"records.json"),JsonSerializer.Serialize(new{plugin=plugin.FileName.String,npcLocalId=0x800,referenceLocalId=0x801,raceLocalId=existingRace?(int?)null:0x802,raceMode=existingRace?"existing":"private",outputRace=outputRace.ToString(),skinLocalId=0x803,masters,notes,dependencies,keywordProviders,buildWarnings,recordMap=map.Select(p=>new{source=p.Key.ToString(),target=p.Value.ToString()}),records=dst.EnumerateMajorRecords().Select(r=>new{type=r.GetType().Name,id=r.FormKey.ID,editor=r.EditorID,links=r.EnumerateFormLinks().Select(l=>l.FormKey.ToString()).Distinct().ToArray()})},JsonOptions));
   foreach(var o in owners)o.Dispose();Console.WriteLine(JsonSerializer.Serialize(new{records=dst.EnumerateMajorRecords().Count(),masters,nextId=next}));
  }
  static string Norm(string s)=>s.Replace('\\','/').ToLowerInvariant().TrimStart('/');

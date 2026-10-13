@@ -5,10 +5,12 @@ using Mutagen.Bethesda.Plugins.Records;
 using Mutagen.Bethesda.Skyrim;
 using AutoFollower;
 static class Validate {
- public static void Run(string pluginPath,string masterPaths,string output,string? planPath=null,string? manifestPath=null) {
+ public static void Run(string pluginPath,string masterPaths,string output,string? planPath=null,string? manifestPath=null,bool bestEffort=false) {
+  var qualityFindings=new List<string>();PluginValidationFailure? referenceFailure=null;
+  try {
   using var mod=SkyrimMod.CreateFromBinaryOverlay(pluginPath,SkyrimRelease.SkyrimSE);
   var records=mod.EnumerateMajorRecords().ToDictionary(r=>r.FormKey);
-  void Check(bool value,string reason){if(!value)throw new Exception(reason);}
+  void Check(bool value,string reason){if(value)return;if(!bestEffort)throw new Exception(reason);qualityFindings.Add(reason);}
   var planData=planPath==null?default:JsonDocument.Parse(File.ReadAllText(planPath)).RootElement;
   var warnedMissing=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
   if(planPath!=null&&planData.TryGetProperty("missingReferences",out var absent)&&absent.ValueKind==JsonValueKind.Array)foreach(var row in absent.EnumerateArray()){
@@ -30,30 +32,35 @@ static class Validate {
   Check(locals.Select(r=>r.FormKey.ID).Order().SequenceEqual(registry.GetProperty("localIds").EnumerateArray().Select(e=>e.GetUInt32()).Order()),"Identity registry mismatch");}
   else{var plan=JsonDocument.Parse(File.ReadAllText(planPath)).RootElement;Check(locals.Select(r=>r.FormKey.ID).Distinct().Count()==locals.Length,"Duplicate lean local IDs");Check(plan.GetProperty("schema").GetString()=="lean-export-input-plan/v1"&&plan.GetProperty("gaps").GetArrayLength()==0,"Lean generation has unresolved inputs");}
   var paths=JsonDocument.Parse(File.ReadAllText(masterPaths)).RootElement.EnumerateObject().ToDictionary(p=>p.Name,p=>p.Value.GetString()!,StringComparer.OrdinalIgnoreCase);
-  var unresolved=new List<string>();var referenceDetails=new List<EmittedReferenceDetail>();var masterRecords=new Dictionary<ModKey,HashSet<FormKey>>();
+  var unresolved=new List<string>();var referenceDetails=new List<EmittedReferenceDetail>();
+  var declaredMasters=mod.ModHeader.MasterReferences.Select(m=>m.Master).ToHashSet();
+  var masterRecords=new Dictionary<FormKey,(Type Type,bool Deleted)>();
   foreach(var master in mod.ModHeader.MasterReferences) {
    Check(paths.TryGetValue(master.Master.FileName.String,out var path)&&File.Exists(path),"Missing required master "+master.Master);
+   if(!File.Exists(path))continue;
    using var src=SkyrimMod.CreateFromBinaryOverlay(path!,SkyrimRelease.SkyrimSE);
    Check(src.ModKey==master.Master,"Required master identity differs: "+master.Master);
-   masterRecords[master.Master]=src.EnumerateMajorRecords().Select(r=>r.FormKey).ToHashSet();
+   Check(src.ModHeader.MasterReferences.All(m=>declaredMasters.Contains(m.Master)),"Missing declared transitive master for "+master.Master);
+   foreach(var record in src.EnumerateMajorRecords())if(declaredMasters.Contains(record.FormKey.ModKey))masterRecords[record.FormKey]=(record.GetType(),record.IsDeleted);
   }
   foreach(var rec in records.Values)foreach(var l in rec.EnumerateFormLinks().Where(l=>!l.FormKey.IsNull)) {
    string? scope=null;
-   if(l.FormKey.ModKey==mod.ModKey){if(!records.ContainsKey(l.FormKey))scope="missing-local-record";}
-   else if(!masterRecords.TryGetValue(l.FormKey.ModKey,out var keys))scope="undeclared-master";
-   else if(!keys.Contains(l.FormKey)){
+   if(l.FormKey.ModKey==mod.ModKey){if(!records.TryGetValue(l.FormKey,out var local))scope="missing-local-record";else if(!l.Type.IsAssignableFrom(local.GetType()))scope="wrong-record-type";}
+   else if(!declaredMasters.Contains(l.FormKey.ModKey))scope="undeclared-master";
+   else if(!masterRecords.TryGetValue(l.FormKey,out var resolved)||resolved.Deleted){
     // Skyrim's PlayerRef (00000014) is supplied by the engine, not a master
     // record. Accept only that exact declared-master key in an actor/reference
     // compatible field; adjacent IDs, other plugins and other link types fail.
     bool playerReference=l.FormKey==new FormKey(ModKey.FromFileName("Skyrim.esm"),0x14)&&l.Type.IsAssignableFrom(typeof(IPlacedNpcGetter));
     if(!playerReference)scope="missing-master-record";
    }
+   else if(!l.Type.IsAssignableFrom(resolved.Type))scope="wrong-record-type";
    if(scope!=null){unresolved.Add(rec.FormKey+" -> "+l.FormKey);if(referenceDetails.Count<PluginValidationFailure.MaximumDetails)referenceDetails.Add(new(PluginValidationFailure.RecordType(rec.GetType()),PluginValidationFailure.RecordType(l.Type),scope,rec.FormKey.ToString(),l.FormKey.ToString(),l.FormKey.ModKey.FileName.String));}
   }
   if(unresolved.Count>0){
-   var failure=new PluginValidationFailure(PluginValidationFailure.Format,PluginValidationFailure.Unresolved,unresolved.Count,unresolved.Count>PluginValidationFailure.MaximumDetails,referenceDetails.ToArray());
+   referenceFailure=new PluginValidationFailure(PluginValidationFailure.Format,PluginValidationFailure.Unresolved,unresolved.Count,unresolved.Count>PluginValidationFailure.MaximumDetails,referenceDetails.ToArray());
    // Optional diagnostics must not replace the owner's original rejection.
-   try{File.WriteAllText(output,JsonSerializer.Serialize(new{validationFailure=failure},Wire.Options));}catch(Exception e)when(e is IOException or UnauthorizedAccessException){}
+   try{File.WriteAllText(output,JsonSerializer.Serialize(new{passed=false,validationFailure=referenceFailure},Wire.Options));}catch(Exception e)when(e is IOException or UnauthorizedAccessException){}
    Check(false,"Unresolved emitted links: "+string.Join(',',unresolved));
   }
   bool existingRace=planPath!=null&&LeanRacePolicy.IsExisting(SettingsWriter.Resolve(planData));
@@ -177,7 +184,12 @@ static class Validate {
    var position=plan.GetProperty("savedActor").GetProperty("placement").GetProperty("position").EnumerateArray().Select(x=>x.GetSingle()).ToArray();var rotation=plan.GetProperty("savedActor").GetProperty("placement").GetProperty("rotation").EnumerateArray().Select(x=>x.GetSingle()).ToArray();
    Check(actor.Placement!.Position==new Noggog.P3Float(position[0],position[1],position[2])&&actor.Placement.Rotation==new Noggog.P3Float(rotation[0],rotation[1],rotation[2]),"Saved position/rotation changed by settings");
   }else Check(actor.Placement!.Position.X==-3897.552734375f&&actor.Placement.Position.Y==-1116.3406982421875f&&actor.Placement.Position.Z==6656f&&actor.Placement.Rotation.X==0.2665759325027466f&&actor.Placement.Rotation.Y==0&&actor.Placement.Rotation.Z==4.975196361541748f&&actor.Scale==0.95f,"Full captured transform mismatch");
-  File.WriteAllText(output,JsonSerializer.Serialize(new {passed=true,settings=settingsReadback,character=new{sex=female?1:0,sourceRace=planPath==null?"Skyrim.esm|013742":planData.GetProperty("savedActor").GetProperty("race").GetString(),armorRace=armorRace.ToString(),morphRace=race.MorphRace.FormKey.ToString()},records=records.Count,newRecords=locals.Length,masters=masterRecords.Keys.Select(k=>k.FileName.String),unresolvedLinks=unresolved,warnedMissingReferences=warnedMissing.Order(StringComparer.OrdinalIgnoreCase).ToArray(),placement=new {cell=resolvedPlacement?.Transform.Cell??"Skyrim.esm|016DF2",worldspace=resolvedPlacement?.Worldspace,containerCell=cell.FormKey.ToString(),partialForm=true,position=actor.Placement.Position.ToString(),rotation=actor.Placement.Rotation.ToString(),scale=actor.Scale},outfitItems=outfit.Items.Select(i=>i.FormKey.ToString()),armorApplicability=armorChecks,raceMode=existingRace?"existing":"private",privateSkeleton=existingRace?null:skeleton!.File.GivenPath,existingSkeleton=existingRace?skeleton!.File.GivenPath:null,independentReadback=true,runtimeAcceptance=false},new JsonSerializerOptions{WriteIndented=true,PropertyNamingPolicy=JsonNamingPolicy.CamelCase}));
-  Console.WriteLine("Independent plugin readback passed: "+records.Count+" records");
+  File.WriteAllText(output,JsonSerializer.Serialize(new {passed=qualityFindings.Count==0,qualityFindings,validationFailure=referenceFailure,checksComplete=true,settings=settingsReadback,character=new{sex=female?1:0,sourceRace=planPath==null?"Skyrim.esm|013742":planData.GetProperty("savedActor").GetProperty("race").GetString(),armorRace=armorRace.ToString(),morphRace=race.MorphRace.FormKey.ToString()},records=records.Count,newRecords=locals.Length,masters=mod.ModHeader.MasterReferences.Select(m=>m.Master.FileName.String),unresolvedLinks=unresolved,warnedMissingReferences=warnedMissing.Order(StringComparer.OrdinalIgnoreCase).ToArray(),placement=new {cell=resolvedPlacement?.Transform.Cell??"Skyrim.esm|016DF2",worldspace=resolvedPlacement?.Worldspace,containerCell=cell.FormKey.ToString(),partialForm=true,position=actor.Placement.Position.ToString(),rotation=actor.Placement.Rotation.ToString(),scale=actor.Scale},outfitItems=outfit.Items.Select(i=>i.FormKey.ToString()),armorApplicability=armorChecks,raceMode=existingRace?"existing":"private",privateSkeleton=existingRace?null:skeleton!.File.GivenPath,existingSkeleton=existingRace?skeleton!.File.GivenPath:null,independentReadback=true,runtimeAcceptance=false},new JsonSerializerOptions{WriteIndented=true,PropertyNamingPolicy=JsonNamingPolicy.CamelCase}));
+  Console.WriteLine("Independent plugin readback "+(qualityFindings.Count==0?"passed":"failed; follower may be delivered with warnings")+": "+records.Count+" records");
+  }catch(Exception e)when(bestEffort && e is InvalidOperationException or KeyNotFoundException or NullReferenceException or ArgumentException or InvalidDataException or OverflowException or FormatException or FileNotFoundException){
+   qualityFindings.Add("Remaining plugin inspection unavailable: "+e.GetType().Name+": "+e.Message);
+   File.WriteAllText(output,JsonSerializer.Serialize(new{passed=false,qualityFindings,validationFailure=referenceFailure,checksComplete=false,runtimeAcceptance=false},Wire.Options));
+   Console.WriteLine("Plugin inspection incomplete; failed assessment retained.");
+  }
  }
 }

@@ -5,10 +5,10 @@ using Mutagen.Bethesda.Plugins.Records;
 using Mutagen.Bethesda.Skyrim;
 using Noggog;
 
-if(args[0]=="validate-lean") {try {Validate.Run(args[1],args[2],args[3],args[4],args.ElementAtOrDefault(5));}catch(Exception ex){Console.Error.WriteLine(ex);Environment.ExitCode=1;}return;}
+if(args[0] is "validate-lean" or "validate-best-effort") {try {Validate.Run(args[1],args[2],args[3],args[4],args.ElementAtOrDefault(5),args[0]=="validate-best-effort");}catch(Exception ex){Console.Error.WriteLine(ex);Environment.ExitCode=1;}return;}
 
 if(args[0]=="validate") {try {Validate.Run(args[1],args[2],args[3]);}catch(Exception ex){Console.Error.WriteLine(ex);Environment.ExitCode=1;}return;}
-if(args[0]=="generate") {try {Generate.Run(args[1],args[2],args[3]);}catch(Exception ex){Console.Error.WriteLine(ex);Environment.ExitCode=1;}return;}
+if(args[0] is "generate" or "generate-best-effort") {try {Generate.Run(args[1],args[2],args[3],args[0]=="generate-best-effort");}catch(Exception ex){Console.Error.WriteLine(ex);Environment.ExitCode=1;}return;}
 if(args[0]=="quests") {using var qm=SkyrimMod.CreateFromBinaryOverlay(args[1],SkyrimRelease.SkyrimSE);foreach(var qr in qm.Quests)Console.WriteLine(qr.FormKey+" "+qr.EditorID+" "+string.Join(',',qr.VirtualMachineAdapter?.Scripts.Select(s=>s.Name)??Array.Empty<string>()));return;}
 if (args[0] == "reflect") {
     foreach(var name in args.Skip(1)) {

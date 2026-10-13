@@ -40,11 +40,11 @@ public static class FollowerInputPreparation
         if(string.IsNullOrWhiteSpace(tintReference))throw new InvalidDataException("Selected head has no supported derived tint reference");
         selection=selection with{TintReference=tintReference};
         LeanAppearance appearance;
-        try{appearance=LeanExportInputs.Bundle(head,bytes[3],bytes[4],saved,selection.TintReference,selection.ExportAssociation);}
+        try{appearance=LeanExportInputs.Bundle(head,bytes[3],bytes[4],saved,selection.TintReference,selection.ExportAssociation,bestEffort:true);}
         catch(InvalidDataException e)when(e.Message.StartsWith("JSlot",StringComparison.Ordinal)){throw new FollowerInputException("RaceMenu preset",selection.Jslot,e,true);}
         catch(Exception e)when(e is System.Text.Json.JsonException or KeyNotFoundException or InvalidOperationException){throw new InvalidDataException("Selected RaceMenu export bundle is malformed or missing required fields; replace the head NIF, tint DDS or JSlot with the matching export files",e);}
         LeanAppearanceAssessment materials;
-        try{materials=LeanAppearanceAssociations.Assess(head,cosave.Skee);}
+        try{materials=LeanAppearanceAssociations.Assess(head,cosave.Skee,bestEffort:true);}
         catch(InvalidDataException e){throw new FollowerInputException("Co-save appearance",selection.Cosave,e);}
         token.ThrowIfCancellationRequested();
         var savePreview=new FollowerSavePreview(pins[0].Path,pins[0].Sha256,saved,FollowerSettingsPolicy.Context(saved.Actor),formats);

@@ -9,8 +9,8 @@ build, OBody NG (as-is), or both applicable outputs; both produce a FOMOD instal
 
 ## Install and use
 
-Download the [Windows x64 application packet](https://github.com/mhkul/Lazybones-Follower-Slopper/releases/download/v0.1.2/Lazybones-Follower-Slopper-0.1.2-windows-x64.zip)
-from [release v0.1.2](https://github.com/mhkul/Lazybones-Follower-Slopper/releases/tag/v0.1.2). Extract outside game, mod and input folders. Run the EXE
+Download the [Windows x64 application packet](https://github.com/mhkul/Lazybones-Follower-Slopper/releases/download/v0.1.3/Lazybones-Follower-Slopper-0.1.3-windows-x64.zip)
+from [release v0.1.3](https://github.com/mhkul/Lazybones-Follower-Slopper/releases/tag/v0.1.3). Extract outside game, mod and input folders. Run the EXE
 directly for physical/deployed Data, or register it in MO2 with empty Arguments
 and run through the intended existing profile. End-user Python and .NET are bundled.
 This source repository does not contain the EXE or dependency binaries.
@@ -21,8 +21,9 @@ the Save ZIP to destination, then Build. Install the resulting follower ZIP
 through your mod manager and follow its dependency instructions.
 Mesh-bearing ammunition is included alongside armor and weapons. Output controls
 are BodySlide build and OBody NG (as-is); unassigned characters use As-is
-(no BodySlide). Missing compatible outfit projects require an explicit recovery
-choice. The error window offers an anonymous diagnostic ZIP by default, with
+(no BodySlide). Missing compatible outfit projects retain captured meshes with
+warnings about unavailable preset baking. The error window offers an anonymous
+diagnostic ZIP by default, with
 private files available only through an unchecked opt-in. Owned scratch cleanup
 preserves unconfirmed packages and delivery retries.
 See the [installation, operation and rebuild guide](src/AGENT_GUIDE.md).
@@ -56,7 +57,12 @@ User manual testing passed on Skyrim SE 1.5.97/MO2. AE, VR, other stores/manager
 and actual Vortex setups remain unverified. The application is unsigned; versions
 are informational and source/format checks still apply. Body overlays are
 deferred with warnings. Recoverable missing references may retain items with
-named warnings; appearance, audio or behavior can differ. Read Build details.
+named warnings; appearance, audio or behavior can differ. When useful follower
+files can be written safely, failed output checks complete as **Built with
+warnings**. Unresolved references remain intact and failed checks stay failed.
+An unavailable preset bake can use captured installed meshes; a surviving
+requested variant can still be delivered. The follower ZIP names these limits
+and may require repair before it loads or works. Read Build details.
 
 Non-OBody meshes remain as-is. Prebuilt XML/BodySlide work applies only to
 OBody-preset-affected meshes; OBody uses captured winning installed meshes and
@@ -74,17 +80,23 @@ than missing loose files. Bundled components and assets retain their own terms.
 Creating a follower grants no right to redistribute its source assets.
 
 When redistributing application binaries, supply matching application source
-and access to `Lazybones-Follower-Slopper-0.1.2-thirdparty-source.zip`, the separate
+and access to `Lazybones-Follower-Slopper-0.1.3-thirdparty-source.zip`, the separate
 dependency-source release asset containing full notices and exact binary/revision
 correspondence indexes. This repository does not replace that companion.
 Published upstream binaries were not independently rebuilt. Download matching
-[application source at v0.1.2](https://github.com/mhkul/Lazybones-Follower-Slopper/tree/v0.1.2/src) or its [tagged repository ZIP](https://github.com/mhkul/Lazybones-Follower-Slopper/archive/refs/tags/v0.1.2.zip),
-[dependency source](https://github.com/mhkul/Lazybones-Follower-Slopper/releases/download/v0.1.2/Lazybones-Follower-Slopper-0.1.2-thirdparty-source.zip)
-and [checksums in the release notes](https://github.com/mhkul/Lazybones-Follower-Slopper/releases/tag/v0.1.2)
+[application source at v0.1.3](https://github.com/mhkul/Lazybones-Follower-Slopper/tree/v0.1.3/src) or its [tagged repository ZIP](https://github.com/mhkul/Lazybones-Follower-Slopper/archive/refs/tags/v0.1.3.zip),
+[dependency source](https://github.com/mhkul/Lazybones-Follower-Slopper/releases/download/v0.1.3/Lazybones-Follower-Slopper-0.1.3-thirdparty-source.zip)
+and [checksums in the release notes](https://github.com/mhkul/Lazybones-Follower-Slopper/releases/tag/v0.1.3)
 from the same release. The Windows ZIP already includes buildable `src/`;
 the dependency-source ZIP is for rebuilding or redistribution and is not needed to run the app.
 
 For binary redistribution, preserve the [Python native component metadata](src/dependencies/python-native-components.json).
-The v0.1.2 dependency-source
+The v0.1.3 dependency-source
 companion includes the matching ctypes/libffi source, full notices and updated
 component indexes alongside the existing dependency sources.
+
+Builds finish with warnings when usable output can be written safely, including
+partial requested outputs or unresolved quality findings. Review Build details
+and the generated install instructions: warnings may mean appearance or gameplay
+defects, unavailable preset baking or assignment, or a plugin that cannot load.
+Failed checks remain failed; warnings do not establish in-game success.

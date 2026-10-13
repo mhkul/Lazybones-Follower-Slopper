@@ -930,7 +930,7 @@ internal sealed class MainForm : Form
         using var document = JsonDocument.Parse(await File.ReadAllTextAsync(resultPath));
         var root = document.RootElement;
         string status = root.TryGetProperty("status", out var state) ? state.GetString() ?? "unknown" : "unknown";
-        if (exitCode == 0 && status == "structural-build-passed" && root.TryGetProperty("distribution", out var distribution) && distribution.TryGetProperty("path", out var zipElement))
+        if (exitCode == 0 && BestEffortBuild.DeliveredStatus(status) && root.TryGetProperty("distribution", out var distribution) && distribution.TryGetProperty("path", out var zipElement))
         {
             string sourceZip = Path.GetFullPath(zipElement.GetString() ?? "");
             SafePaths.NoLinks(sourceZip);
@@ -957,10 +957,11 @@ internal sealed class MainForm : Form
             string equipmentWarnings=omittedCount>0?string.Join("\r\n",equipmentOmissions.EnumerateArray().Select(x=>x.GetProperty("warning").GetString())):"";
             string repairWarnings=root.TryGetProperty("assetRepairWarnings",out var repairs)?string.Join("\r\n",repairs.EnumerateArray().Select(x=>x.GetString())):"";
             string materialWarnings=root.TryGetProperty("materialConflicts",out var materialConflicts)?string.Join("\r\n",materialConflicts.EnumerateArray().Select(x=>x.GetProperty("warning").GetString())):"";
+            string qualityWarnings=root.TryGetProperty("buildWarnings",out var buildWarnings)?string.Join("\r\n",buildWarnings.EnumerateArray().Select(x=>x.GetProperty("warning").GetString()).Distinct()):"";
             _operationStatus.Visible = false;
             SetCompletionHeader(true);
             _completionHeading.Visible = _completionSummary.Visible = _completionPath.Visible = _detailsToggle.Visible = true;
-            if(omittedCount>0||missingWarnings.Length>0)_completionHeading.Text="Follower ready with warnings";
+            if(omittedCount>0||missingWarnings.Length>0||qualityWarnings.Length>0)_completionHeading.Text="Built with warnings";
             _completionPath.Text = _deliveryPath;
             _completionPath.AccessibleDescription = _deliveryPath;
             var warnings = new List<string> { LeanOverlayPolicy.Warning };
@@ -969,6 +970,7 @@ internal sealed class MainForm : Form
             if (!string.IsNullOrWhiteSpace(repairWarnings)) warnings.Add("Creator texture paths repaired; see Build details.");
             if(omittedCount>0)warnings.Insert(0,$"{omittedCount} equipment items excluded; see Build details.");
             if(missingWarnings.Length>0)warnings.Insert(0,"Some called assets are unavailable. Items retained with original references; see Build details.");
+            if(qualityWarnings.Length>0)warnings.Insert(0,"Some output checks failed or requested transformations were unavailable. The follower may not work in Skyrim; see Build details.");
             _completionWarning.Text = string.Join(" ", warnings);
             _completionWarning.Visible = true;
             string phases = root.TryGetProperty("phases", out var phaseArray) && phaseArray.ValueKind == JsonValueKind.Array
@@ -978,7 +980,8 @@ internal sealed class MainForm : Form
             string sourceBytesText = root.TryGetProperty("sourceBytesRead", out var sourceBytes) ? sourceBytes.ToString() : "not recorded";
             string elapsedText = root.TryGetProperty("totalMilliseconds", out var elapsed) ? elapsed.ToString() : "not recorded";
             string metrics = $"Source files read: {sourceFilesText}; source bytes read: {sourceBytesText}; total: {elapsedText} ms.";
-            _technicalDetails.Text = $"Structural checks passed. In-game behavior has not been tested.{destinationText}\r\n{levelText}\r\n\r\n{LeanOverlayPolicy.Warning}\r\nMaterial notes:\r\n{materialWarnings}\r\nRuntime assignment warnings:\r\n{assignmentWarnings}\r\nMissing assets kept as references:\r\n{missingWarnings}\r\nEquipment omissions:\r\n{equipmentWarnings}\r\nAsset repairs:\r\n{repairWarnings}\r\nRuntime assignment omissions:\r\n{omissions}\r\n\r\n{SkyrimRuntimeProfile.ForInputs(_preview?.Selection.Store??"unspecified",_preview?.Selection.InputRuntime??"").Notice}\r\nBuild measurements: {metrics}\r\nBuild stages:\r\n{phases}\r\nDetailed result: {resultPath}";
+            string assessmentText=qualityWarnings.Length>0?"Built with warnings. Failed assessments remain failed; the available follower is delivered.":"Structural checks passed.";
+            _technicalDetails.Text = $"{assessmentText}\r\nOutput warnings:\r\n{qualityWarnings} In-game behavior has not been tested.{destinationText}\r\n{levelText}\r\n\r\n{LeanOverlayPolicy.Warning}\r\nMaterial notes:\r\n{materialWarnings}\r\nRuntime assignment warnings:\r\n{assignmentWarnings}\r\nMissing assets kept as references:\r\n{missingWarnings}\r\nEquipment omissions:\r\n{equipmentWarnings}\r\nAsset repairs:\r\n{repairWarnings}\r\nRuntime assignment omissions:\r\n{omissions}\r\n\r\n{SkyrimRuntimeProfile.ForInputs(_preview?.Selection.Store??"unspecified",_preview?.Selection.InputRuntime??"").Notice}\r\nBuild measurements: {metrics}\r\nBuild stages:\r\n{phases}\r\nDetailed result: {resultPath}";
         }
         else
         {

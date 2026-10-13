@@ -49,7 +49,7 @@ public sealed record PluginValidationFailure(string Schema, string Category, int
             foreach (var row in array.EnumerateArray())
             {
                 string source = row.GetProperty("sourceRecordType").GetString()!, target = row.GetProperty("targetRecordType").GetString()!, scope = row.GetProperty("targetScope").GetString()!;
-                if (!Types.Contains(source) || !Types.Contains(target) || scope is not ("missing-local-record" or "undeclared-master" or "missing-master-record")) return false;
+                if (!Types.Contains(source) || !Types.Contains(target) || scope is not ("missing-local-record" or "undeclared-master" or "missing-master-record" or "wrong-record-type")) return false;
                 references.Add(new(source, target, scope, Identity(row,"sourceRecord"), Identity(row,"targetRecord"), Identity(row,"targetPlugin")));
             }
             failure = new(Format, Unresolved, count, truncated, references.ToArray()); return true;

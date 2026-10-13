@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Xml.Linq;
+using System.Reflection.PortableExecutable;
 
 namespace AutoFollower;
 
@@ -19,12 +20,45 @@ public static class LeanBodyInputs
     const string RelocatedProject="CBBE 3BA Creation Club - 1st Person - Boiled Netch Leather Armour";
     public static string ResolveToolReference(LeanMo2Sources sources)
     {
-        // Distinct filenames have distinct selected-view winners. Coexistence
-        // does not establish which release owns the shared startup resources.
         string[] found=new[]{"CalienteTools/BodySlide/BodySlide.exe","CalienteTools/BodySlide/BodySlide x64.exe"}.Where(r=>File.Exists(sources.Virtual(r))).ToArray();
         if(found.Length==0)throw new FileNotFoundException("BodySlide build requires installed BodySlide.exe or BodySlide x64.exe in the selected environment. Restore a complete matching tool layout, or explicitly choose OBody-only output.");
-        if(found.Length!=1)throw new InvalidDataException("Both BodySlide.exe and BodySlide x64.exe are present in the selected environment; the matching executable/resource layout is ambiguous. Resolve the selected tool layout, or explicitly choose OBody-only output. No executable was selected automatically.");
-        return found[0];
+        try{
+        var candidates=found.Select(reference=>{
+            using var stream=sources.Open(sources.Virtual(reference));string backing=LeanMo2Sources.Backing(stream);
+            using var pe=new PEReader(stream,PEStreamOptions.LeaveOpen);var header=pe.PEHeaders;
+            if(header.PEHeader==null||header.CoffHeader.Characteristics.HasFlag(Characteristics.Dll)||header.CoffHeader.Machine is not (Machine.Amd64 or Machine.I386))throw new InvalidDataException("Selected BodySlide executable is not a supported Windows x86/x64 application. Restore its complete matching tool layout, or choose OBody-only output.");
+            var info=FileVersionInfo.GetVersionInfo(backing);
+            if(!string.IsNullOrEmpty(info.ProductName)&&!info.ProductName.Equals("BodySlide",StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("Selected executable is not identified as BodySlide. Restore its complete matching tool layout, or choose OBody-only output.");
+            return new{Reference=reference,Backing=backing,Root=Path.GetDirectoryName(backing)!,X64=header.CoffHeader.Machine==Machine.Amd64,Version=info.FileVersion==null?null:new Version(info.FileMajorPart,info.FileMinorPart,info.FileBuildPart,info.FilePrivatePart)};
+        }).ToArray();
+        if(candidates.Length==1)return candidates[0].Reference;
+        // Legacy packages contain x86 and x64 applications. Modern packages
+        // rename x64 to BodySlide.exe; an older sibling can survive an upgrade.
+        // Inspect actual binaries and every consumed resource's selected backing.
+        var resources=StartupReferences(sources).Select(reference=>{
+            using var stream=sources.Open(sources.Virtual(reference));return new{Reference=reference,Backing=LeanMo2Sources.Backing(stream)};
+        }).ToArray();
+        var compatible=candidates.Where(c=>c.X64&&resources.All(r=>Path.GetFullPath(Path.Combine(c.Root,Path.GetRelativePath("CalienteTools/BodySlide",r.Reference))).Equals(r.Backing,StringComparison.OrdinalIgnoreCase))).ToArray();
+        if(compatible.Length==1)return compatible[0].Reference;
+        if(compatible.Length==2){
+            if(Hashing.File(compatible[0].Backing)==Hashing.File(compatible[1].Backing))return compatible[0].Reference;
+            if(compatible.All(c=>c.Version!=null)&&compatible[0].Version!=compatible[1].Version)return compatible.OrderByDescending(c=>c.Version).First().Reference;
+        }
+        throw new InvalidDataException("BodySlide's selected executables and required startup resources do not establish a unique compatible x64 application. Restore one complete matching BodySlide installation in the selected environment, or choose OBody-only output. Installed files were preserved.");
+        }catch(BadImageFormatException e){throw new InvalidDataException("Selected BodySlide executable has an invalid Windows application format. Restore a complete matching BodySlide installation, or choose OBody-only output.",e);}
+    }
+    static string[] StartupReferences(LeanMo2Sources sources)
+    {
+        const string root="CalienteTools/BodySlide/";HashSet<string> resources=new(StringComparer.OrdinalIgnoreCase){root+"res/images/BodySlide.png"};
+        foreach(string name in new[]{"BodySlide","BatchBuild","Settings","About"}){
+            string reference=root+"res/xrc/"+name+".xrc";resources.Add(reference);
+            using var stream=sources.Open(sources.Virtual(reference));var document=XDocument.Load(stream);
+            foreach(var image in document.Descendants().Where(x=>x.Name.LocalName is "bitmap" or "bitmap2")){
+                string value=image.Value.Replace('\\','/');if(value.Length==0)continue;if(value.StartsWith("$(AppDir)/",StringComparison.Ordinal))value=value[10..];
+                if(!value.StartsWith("res/",StringComparison.Ordinal))throw new InvalidDataException("Required tool XRC image path unsupported: "+value);resources.Add(Ref(root+value));
+            }
+        }
+        if(File.Exists(sources.Virtual(root+"res/images/PopOut.png")))resources.Add(root+"res/images/PopOut.png");return resources.Order().ToArray();
     }
     static string Ref(string value)=>VirtualPath.Normalize(value.Replace('\\','/'));
     // OutputPath is a directory and installed projects may include a trailing
