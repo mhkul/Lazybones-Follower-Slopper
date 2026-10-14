@@ -1,4 +1,4 @@
-# Lazybones Follower Slopper 0.1.5: agent guide
+# Lazybones Follower Slopper 0.1.6: agent guide
 
 The Windows x64 application builds a follower ZIP from a selected Skyrim save
 and matching finished RaceMenu export. Operate its WinForms GUI. There is no
@@ -227,7 +227,7 @@ not public source. Editable code is in Gui/Foundation/Writer, Python stages
 in Stages, packagers in tools, and portrait/ICO in `assets/branding/icon-v2`.
 
 Keep `src/LICENSES.txt` and matching dependency-source access when redistributing.
-`Lazybones-Follower-Slopper-0.1.5-thirdparty-source.zip` contains dependency
+`Lazybones-Follower-Slopper-0.1.6-thirdparty-source.zip` contains dependency
 sources, full notices and binary/revision correspondence indexes. Published
 upstream binaries were not independently rebuilt; their own prerequisites
 apply. Mutagen upstream PreBuild deletes cache folders: use an isolated
@@ -235,7 +235,7 @@ upstream profile/cache. This guide adds no public release-packaging command
 or unattended follower-build interface.
 
 The Python native component metadata is in
-dependencies/python-native-components.json. The matching v0.1.5 thirdparty-source
+dependencies/python-native-components.json. The matching v0.1.6 thirdparty-source
 ZIP includes ctypes/libffi source, updated binary/component indexes and full
 notices alongside the existing dependency sources. Preserve that complete
 companion when redistributing application binaries.
@@ -257,3 +257,8 @@ Standalone equipment can preserve verified injected keyword identities; unresolv
 keyword assignments offer keep, selected removal, or cancellation. Selections apply
 consistently across Prebuilt and OBody outputs. BodySlide presets support both,
 small and big endpoints with native document-order precedence.
+
+MO2 startup supports default instance paths and profile-local or Documents INIs.
+When automatic discovery needs help, select a validated instance configuration.
+Quoted, escaped and inline-comment settings are handled consistently, and
+discovery errors explain the available recovery actions.

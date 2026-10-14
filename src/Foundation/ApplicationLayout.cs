@@ -53,7 +53,7 @@ public static class BuildDestinations
         string[] inputs=[request.Save,request.Cosave,request.HeadNif,request.TintDds,request.Jslot];
         string[] presets=new[]{request.PresetXml,request.PresetBacking}.Where(x=>!string.IsNullOrWhiteSpace(x)).Select(x=>x!).ToArray();
         string[] files=inputs.Concat(new[]{request.InstanceIni,request.Mo2,tools.Python,tools.Writer}.Where(x=>!string.IsNullOrWhiteSpace(x))).Concat(presets).ToArray();
-        string[] sourceDirectories=request.Physical==null?SelectedEnvironment.ProtectedDirectories(LeanExportBuilder.ParseIni(File.ReadAllText(request.InstanceIni)),request.Game,request.InstanceIni):[request.Game,request.Physical.IniDirectory,request.Physical.PluginDirectory];
+        string[] sourceDirectories=request.Physical==null?SelectedEnvironment.ProtectedDirectories(Mo2Configuration.Read(File.ReadAllText(request.InstanceIni),request.InstanceIni),request.Game,request.InstanceIni):[request.Game,request.Physical.IniDirectory,request.Physical.PluginDirectory];
         string[] directories=sourceDirectories
             .Concat(new[]{application??AppContext.BaseDirectory,tools.Stages})
             .Concat(inputs.Concat(presets).Concat(new[]{request.Mo2,tools.Python,tools.Writer}).Where(x=>!string.IsNullOrWhiteSpace(x)).Select(x=>Path.GetDirectoryName(Path.GetFullPath(x))!))

@@ -40,7 +40,7 @@ internal static class BuildInputs
         string root = Path.Combine(setup.Game, "Data", "CalienteTools", "BodySlide", "SliderPresets");
         if (!Directory.Exists(root)) return [];
         var mo2=setup.Mo2;
-        var values=mo2==null?new Dictionary<string,string>():ActiveMo2.ParseIni(File.ReadAllText(mo2.InstanceIni));
+        var values=mo2==null?new Dictionary<string,string>():Mo2Configuration.Read(File.ReadAllText(mo2.InstanceIni),mo2.InstanceIni);
         string mods = (values.GetValueOrDefault("Settings/mod_directory") ?? Path.Combine((mo2?.BaseDirectory??setup.Game), "mods")).Replace("%BASE_DIR%", (mo2?.BaseDirectory??setup.Game), StringComparison.OrdinalIgnoreCase);
         string overwrite = (values.GetValueOrDefault("Settings/overwrite_directory") ?? Path.Combine((mo2?.BaseDirectory??setup.Game), "overwrite")).Replace("%BASE_DIR%", (mo2?.BaseDirectory??setup.Game), StringComparison.OrdinalIgnoreCase);
         var enabled = (mo2==null?[]:File.ReadAllLines(Path.Combine(mo2!.ProfileDirectory, "modlist.txt"))).Where(x => x.StartsWith('+')).Select(x => x[1..]).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -92,7 +92,7 @@ internal static class BuildInputs
         string backing = LeanMo2Sources.Backing(file); SafePaths.NoLinks(backing);
         if(setup.Physical!=null){if(!backing.StartsWith(Path.TrimEndingDirectorySeparator(Path.Combine(setup.Game,"Data"))+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("Physical OBody backing is outside selected Data.");return true;}
         var mo2=setup.Mo2;
-        var values=mo2==null?new Dictionary<string,string>():ActiveMo2.ParseIni(File.ReadAllText(mo2.InstanceIni));
+        var values=mo2==null?new Dictionary<string,string>():Mo2Configuration.Read(File.ReadAllText(mo2.InstanceIni),mo2.InstanceIni);
         string Expand(string key, string fallback) => Path.GetFullPath((values.GetValueOrDefault(key) ?? Path.Combine((mo2?.BaseDirectory??setup.Game), fallback)).Replace("%BASE_DIR%", (mo2?.BaseDirectory??setup.Game), StringComparison.OrdinalIgnoreCase));
         string mods = Path.TrimEndingDirectorySeparator(Expand("Settings/mod_directory", "mods")) + Path.DirectorySeparatorChar;
         if (backing.StartsWith(mods, StringComparison.OrdinalIgnoreCase))

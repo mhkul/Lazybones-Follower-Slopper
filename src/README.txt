@@ -1,4 +1,4 @@
-Lazybones Follower Slopper 0.1.5 — Windows x64
+Lazybones Follower Slopper 0.1.6 — Windows x64
 
 Create a follower install ZIP from a Skyrim save and matching RaceMenu head
 export. Extract outside game, mod and input folders. Open the EXE directly
@@ -90,12 +90,12 @@ lease proof. Unknown legacy caches and .NET bootstrap extraction are retained.
 
 GPLv3, no warranty. Full terms/notices and asset-sharing responsibility:
 src/LICENSES.txt. Check asset permissions before distributing a follower.
-Keep matching Lazybones-Follower-Slopper-0.1.5-thirdparty-source.zip available
+Keep matching Lazybones-Follower-Slopper-0.1.6-thirdparty-source.zip available
 with the application and its source when redistributing. It contains exact
 dependency sources and correspondence indexes. Matching release files:
-https://github.com/mhkul/Lazybones-Follower-Slopper/releases/tag/v0.1.5
+https://github.com/mhkul/Lazybones-Follower-Slopper/releases/tag/v0.1.6
 Issue-reporting guide:
-https://github.com/mhkul/Lazybones-Follower-Slopper/blob/v0.1.5/docs/REPORTING_ISSUES.md
+https://github.com/mhkul/Lazybones-Follower-Slopper/blob/v0.1.6/docs/REPORTING_ISSUES.md
 
 References: https://www.gnu.org/licenses/gpl-3.0.html
 https://john95ac.github.io/website-documents-John95AC/OBody_NG_Preset_Distribution_Assistant_NG/index.html
@@ -118,3 +118,8 @@ Standalone equipment can preserve verified injected keyword identities; unresolv
 keyword assignments offer keep, selected removal, or cancellation. Selections apply
 consistently across Prebuilt and OBody outputs. BodySlide presets support both,
 small and big endpoints with native document-order precedence.
+
+MO2 startup supports default instance paths and profile-local or Documents INIs.
+When automatic discovery needs help, select a validated instance configuration.
+Quoted, escaped and inline-comment settings are handled consistently, and
+discovery errors explain the available recovery actions.

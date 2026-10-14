@@ -46,7 +46,8 @@ public sealed record SelectedEnvironment(string Manager,SkyrimRuntimeProfile Run
     public SelectedDataView FileView=>new(Data,"selected-process-file-view",SourceAccess);
     public static string[] ProtectedDirectories(IReadOnlyDictionary<string,string> ini,string game,string instanceIni)
     {
-        string baseDir=Path.GetFullPath(ini.GetValueOrDefault("Settings/base_directory")??throw new InvalidDataException("MO2 base directory missing"));
+        ini=Mo2Configuration.Normalize(ini,instanceIni);
+        string baseDir=ini["Settings/base_directory"];
         string Expand(string key,string fallback)=>Path.GetFullPath((ini.GetValueOrDefault(key)??Path.Combine(baseDir,fallback)).Replace("%BASE_DIR%",baseDir,StringComparison.OrdinalIgnoreCase));
         return [game,baseDir,Path.GetDirectoryName(Path.GetFullPath(instanceIni))!,Expand("Settings/mod_directory","mods"),Expand("Settings/overwrite_directory","overwrite"),Expand("Settings/profiles_directory","profiles")];
     }

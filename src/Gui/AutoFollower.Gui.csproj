@@ -10,7 +10,7 @@
     <AssemblyName>Lazybones Follower Slopper</AssemblyName>
     <Product>Lazybones Follower Slopper</Product>
     <Title>Lazybones Follower Slopper</Title>
-    <Version>0.1.5</Version>
+    <Version>0.1.6</Version>
     <ApplicationIcon>$(AutoFollowerRoot)assets/branding/icon-v2/lazybones-icon.ico</ApplicationIcon>
     <RootNamespace>AutoFollower.Gui</RootNamespace>
   </PropertyGroup>

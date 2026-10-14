@@ -83,7 +83,7 @@ public static class LeanExportBuilder
             var environmentPins=new List<EnvironmentFilePin>();
             EnvironmentFilePin PinEnvironment(string path){var pin=SelectedEnvironment.Pin(sources,path);environmentPins.Add(pin);return pin;}
             PinEnvironment(request.InstanceIni);
-            var ini=ParseIni(Encoding.UTF8.GetString(sources.Read(request.InstanceIni)));string selected=ini.GetValueOrDefault("General/selected_profile")??"";
+            var ini=Mo2Configuration.Read(Encoding.UTF8.GetString(sources.Read(request.InstanceIni)),request.InstanceIni);string selected=ini.GetValueOrDefault("General/selected_profile")??"";
             if(selected!=request.Profile)throw new InvalidDataException("Selected MO2 profile changed; no profile switch is performed");
             string game=ini.GetValueOrDefault("General/gamePath")??"";if(!Path.GetFullPath(game).Equals(Path.GetFullPath(request.Game),StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("Selected MO2 game differs");
             SkyrimRuntimeProfile.Require(request.Store,FileVersionInfo.GetVersionInfo(Path.Combine(request.Game,"SkyrimSE.exe")).FileVersion??"");
@@ -103,8 +103,10 @@ public static class LeanExportBuilder
             if(requiredSaved.Length>0)throw new InvalidDataException("Required saved input plugins are inactive in selected MO2: "+string.Join(", ",requiredSaved));
             string query=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),"My Games","Skyrim Special Edition","Skyrim.ini");
             PinEnvironment(Path.Combine(profile,"settings.ini"));
-            var profileSettings=ParseIni(Encoding.UTF8.GetString(sources.Read(Path.Combine(profile,"settings.ini"))));
-            if(profileSettings.GetValueOrDefault("General/LocalSettings")!="true")throw new InvalidDataException("Source rule currently supports selected MO2 profile-local INIs only");
+            string settingsPath=Path.Combine(profile,"settings.ini");
+            bool localInis=Mo2Configuration.LocalInis(ini,File.Exists(settingsPath)?Encoding.UTF8.GetString(sources.Read(settingsPath)):null);
+            var liveProfile=Mo2ProfileEvidence.Read();liveProfile.Require(profile,localInis);
+            foreach(string name in new[]{"plugins.txt","loadorder.txt"})PinEnvironment(Mo2ProfileEvidence.PluginQuery(name));
             if(File.Exists(Path.Combine(request.Game,"Skyrim.ini")))throw new InvalidDataException("Game-directory Skyrim.ini override remains unsupported by the selected source rule");
             Dictionary<string,string> effectiveIni=new(StringComparer.OrdinalIgnoreCase);List<object> iniEvidence=[];string? configured=null;
             void ReadPolicyIni(string path,string? expected,bool primary){
@@ -121,7 +123,7 @@ public static class LeanExportBuilder
                 iniEvidence.Add(new{Path=path,Backing=backing,Sha256=BoundedBinary.Digest(bytes),Bytes=bytes.Length,ConfiguredInvalidation=value});
             }
             foreach(string name in new[]{"Skyrim.ini","SkyrimPrefs.ini","SkyrimCustom.ini"}){
-                string path=Path.Combine(Path.GetDirectoryName(query)!,name),expected=Path.Combine(profile,name);
+                string path=Path.Combine(Path.GetDirectoryName(query)!,name),expected=localInis?Path.Combine(profile,name):path;
                 if(name=="Skyrim.ini"||File.Exists(expected)||File.Exists(path))ReadPolicyIni(path,expected,name=="Skyrim.ini");else PinEnvironment(path);
             }
             // Active plugin INIs can alter game settings. Only these concrete

@@ -13,6 +13,7 @@ internal sealed class MainForm : Form
     private readonly Dictionary<string, string> _paths = new(StringComparer.Ordinal) { ["Save"] = "", ["Cosave"] = "", ["HeadNif"] = "", ["TintDds"] = "", ["Jslot"] = "" };
     private readonly Dictionary<string, Label> _pathLabels = [];
     private readonly Label _environmentLabel = new();
+    private readonly Button _environmentButton = new ReadableButton();
     private readonly Label _landingError = new();
     private readonly Label _companionDetails = new() { Dock = DockStyle.Fill, AutoEllipsis = true };
     private readonly Button _prepareCancelButton = new() { Text = "Cancel checking", Visible = false, Width = 145, Height = 38 };
@@ -129,6 +130,7 @@ internal sealed class MainForm : Form
         Controls.Add(_landing); Controls.Add(_settingsPage); Controls.Add(_operationPage);
         _environmentLabel.Text = environment;
         _environmentLabel.ForeColor = _setup == null ? DesktopTheme.Error : Color.FromArgb(148, 210, 174);
+        if(LeanMo2Sources.HasContext&&_setup==null)((TableLayoutPanel)_environmentLabel.Parent!).RowStyles[2].Height=96;
         _progressTimer.Tick += (_, _) => RefreshProgress();
         Shown += async (_, _) => await Task.Run(() => { try { WorkingStorage.Sweep(BuildDestinations.DefaultRoot()); } catch (Exception) { /* Optional maintenance never blocks startup. */ } });
         ShowPage(_landing);
@@ -238,11 +240,10 @@ internal sealed class MainForm : Form
         root.Controls.Add(Header("Create a follower", "Choose the save and matching RaceMenu export files to begin."), 0, 0);
         root.RowStyles[1].Height=44;root.RowStyles[6].Height=66;
         var setup=new FlowLayoutPanel{Dock=DockStyle.Fill,WrapContents=false};
-        if (!LeanMo2Sources.HasContext)
-        {
-            var confirm=new ReadableButton{Text="Skyrim folder…",Size=new Size(150,28)};
-            confirm.Click+=(_,_)=>ChooseEnvironment();setup.Controls.Add(confirm);
-        }
+        _environmentButton.Text=LeanMo2Sources.HasContext?"Choose MO2 instance…":"Skyrim folder…";
+        _environmentButton.Size=new Size(180,28);
+        _environmentButton.Visible=!LeanMo2Sources.HasContext||_setup==null;
+        _environmentButton.Click+=(_,_)=>ChooseEnvironment();setup.Controls.Add(_environmentButton);
         root.Controls.Add(setup,0,1);
         _environmentLabel.Dock = DockStyle.Fill;
         root.Controls.Add(_environmentLabel, 0, 2);
@@ -702,7 +703,7 @@ internal sealed class MainForm : Form
             c.Obody.Checked = _outputs.Obody && _obodyAvailable;
             c.Prebuilt.Enabled = !_operationActive;
             UpdateOutputHelp(c.Prebuilt, c.Obody, c.Outputs);
-            c.OutputHelp.Text = _setup == null ? "Environment unresolved. Choose the installed Skyrim folder on Inputs." : (_obodyAvailable ? (_preview?.Cosave.ObodyAssignment=="unassigned"?"This save has no OBody assignment. Installed body and outfits stay as-is.":"OBody is present in the selected Data view.") : "OBody is absent from the confirmed environment. Installed body and outfits stay as-is.");
+            c.OutputHelp.Text = _setup == null ? (LeanMo2Sources.HasContext?"Environment unresolved. Choose the MO2 instance on Inputs.":"Environment unresolved. Choose the installed Skyrim folder on Inputs.") : (_obodyAvailable ? (_preview?.Cosave.ObodyAssignment=="unassigned"?"This save has no OBody assignment. Installed body and outfits stay as-is.":"OBody is present in the selected Data view.") : "OBody is absent from the confirmed environment. Installed body and outfits stay as-is.");
             if(_preview?.MaterialConflicts is {Length:>0}){
                 c.OutputHelp.Text="Mouth: finished export used; saved specular override omitted.";
                 c.OutputHelp.ForeColor=Color.FromArgb(237,198,139);
@@ -752,7 +753,7 @@ internal sealed class MainForm : Form
             catch (Exception e) { message = FriendlyError(e); }
         }
         if (_numericError.Length > 0) { valid = false; message = _numericError; }
-        if(_setup==null){valid=false;message="Choose the Skyrim folder on Inputs before building.";}
+        if(_setup==null){valid=false;message=LeanMo2Sources.HasContext?"Resolve the MO2 environment on Inputs before building.":"Choose the Skyrim folder on Inputs before building.";}
         try { LeanOutputPolicy.Resolve(_outputs, _obodyAvailable);if(_preview!=null)LeanOutputPolicy.CapturedObody(_outputs,_obodyAvailable,_preview.Cosave); }
         catch (InvalidDataException e) { valid = false; message = e.Message; }
         if (_operationActive) { valid = false; message = "A build is running. Wait for it to finish or cancel it before editing settings."; }
@@ -1023,7 +1024,7 @@ internal sealed class MainForm : Form
         SafePaths.NoLinks(full);
         if (File.Exists(full) || Directory.Exists(full)) throw new IOException("That ZIP filename already exists. Retry to save with a new filename; existing files are preserved.");
         foreach(var p in _paths.Values.Append(source).Where(x=>!string.IsNullOrWhiteSpace(x)))if(Path.GetFullPath(p).Equals(full,StringComparison.OrdinalIgnoreCase))throw new IOException("Package destination conflicts with a selected input.");
-        string[] directories=_setup!.Mo2 is {} active?SelectedEnvironment.ProtectedDirectories(ActiveMo2.ParseIni(File.ReadAllText(active.InstanceIni)),active.Game,active.InstanceIni):[_setup.Game,_setup.Physical!.IniDirectory,_setup.Physical.PluginDirectory];
+        string[] directories=_setup!.Mo2 is {} active?SelectedEnvironment.ProtectedDirectories(Mo2Configuration.Read(File.ReadAllText(active.InstanceIni),active.InstanceIni),active.Game,active.InstanceIni):[_setup.Game,_setup.Physical!.IniDirectory,_setup.Physical.PluginDirectory];
         foreach(var directory in directories.Concat(new[] { AppContext.BaseDirectory, BuildDestinations.DefaultRoot(), Path.Combine(Path.GetTempPath(), "Lazybones Follower Slopper") }).Concat(_paths.Values.Where(x=>x.Length>0).Select(x=>Path.GetDirectoryName(Path.GetFullPath(x))!)))if(full.StartsWith(Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory))+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase))throw new IOException("Choose a ZIP folder outside input, game, configuration and working folders.");
         if (Path.GetFullPath(source).Equals(full, StringComparison.OrdinalIgnoreCase)) throw new IOException("Package destination conflicts with the completed build artifact.");
     }
@@ -1259,7 +1260,19 @@ internal sealed class MainForm : Form
     {
         if(_preparing||_operationActive)return;
         try {
-            if(LeanMo2Sources.HasContext){_setup=InstalledSetup.Discover(out string status);_mo2=_setup?.Mo2;_environmentLabel.Text=status;}
+            if(LeanMo2Sources.HasContext){
+                _setup=InstalledSetup.Discover(out string status);
+                if(_setup==null){
+                    using var picker=new OpenFileDialog{Title="Choose the launched MO2 instance's ModOrganizer.ini",Filter="MO2 instance configuration|ModOrganizer.ini",CheckFileExists=true,Multiselect=false,InitialDirectory=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"ModOrganizer")};
+                    if(picker.ShowDialog(this)!=DialogResult.OK)return;
+                    var active=ActiveMo2.Recover(picker.FileName,out status);
+                    _setup=active==null?null:InstalledSetup.Virtual(active);
+                }
+                _mo2=_setup?.Mo2;_environmentLabel.Text=status;
+                _environmentButton.Visible=_setup==null;
+                _environmentLabel.ForeColor=_setup==null?DesktopTheme.Error:Color.FromArgb(148,210,174);
+                ((TableLayoutPanel)_environmentLabel.Parent!).RowStyles[2].Height=_setup==null?96:30;
+            }
             else {
                 using var picker=new FolderBrowserDialog{Description="Choose Skyrim's folder containing SkyrimSE.exe and Data",UseDescriptionForTitle=true};
                 if(picker.ShowDialog(this)!=DialogResult.OK)return;
@@ -1312,7 +1325,7 @@ internal sealed class MainForm : Form
         var dirs = _paths.Values.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => Path.GetDirectoryName(Path.GetFullPath(x))!).Concat(new[] { AppContext.BaseDirectory, BuildDestinations.DefaultRoot(), Path.Combine(Path.GetTempPath(), "Lazybones Follower Slopper") });
         if (_setup != null)
         {
-            string[] protectedDirs = _setup.Mo2 is {} active ? SelectedEnvironment.ProtectedDirectories(ActiveMo2.ParseIni(File.ReadAllText(active.InstanceIni)), active.Game, active.InstanceIni) : [_setup.Game, _setup.Physical!.IniDirectory, _setup.Physical.PluginDirectory];
+            string[] protectedDirs = _setup.Mo2 is {} active ? SelectedEnvironment.ProtectedDirectories(Mo2Configuration.Read(File.ReadAllText(active.InstanceIni),active.InstanceIni), active.Game, active.InstanceIni) : [_setup.Game, _setup.Physical!.IniDirectory, _setup.Physical.PluginDirectory];
             dirs = dirs.Concat(protectedDirs);
         }
         foreach (string dir in dirs) if (WorkingStorage.Same(destination, dir) || destination.StartsWith(Path.TrimEndingDirectorySeparator(Path.GetFullPath(dir)) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) throw new IOException("Choose a diagnostic ZIP folder outside input, application and working folders.");
@@ -1419,7 +1432,7 @@ internal sealed class MainForm : Form
 
     private string ObodyOutputHelp()
     {
-        if (_setup == null) return "OBody NG availability is not confirmed. Choose the installed Skyrim folder on Inputs first.";
+        if (_setup == null) return LeanMo2Sources.HasContext?"OBody NG availability is not confirmed. Resolve the MO2 environment on Inputs first.":"OBody NG availability is not confirmed. Choose the installed Skyrim folder on Inputs first.";
         if (!_obodyAvailable) return "OBody NG is unavailable in the confirmed environment. The installed meshes stay as-is.";
         if (_preview?.Cosave.Preset is not null)
             return "Uses installed body and outfit meshes as-is and applies the saved preset through OBody NG in game, without running BodySlide.";
