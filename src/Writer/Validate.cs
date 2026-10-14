@@ -45,7 +45,8 @@ static class Validate {
   }
   foreach(var rec in records.Values)foreach(var l in rec.EnumerateFormLinks().Where(l=>!l.FormKey.IsNull)) {
    string? scope=null;
-   if(l.FormKey.ModKey==mod.ModKey){if(!records.TryGetValue(l.FormKey,out var local))scope="missing-local-record";else if(!l.Type.IsAssignableFrom(local.GetType()))scope="wrong-record-type";}
+   if(records.TryGetValue(l.FormKey,out var emitted)){if(emitted.IsDeleted)scope="missing-local-record";else if(!l.Type.IsAssignableFrom(emitted.GetType()))scope="wrong-record-type";else if(l.FormKey.ModKey!=mod.ModKey&&!declaredMasters.Contains(l.FormKey.ModKey))scope="undeclared-master";}
+   else if(l.FormKey.ModKey==mod.ModKey)scope="missing-local-record";
    else if(!declaredMasters.Contains(l.FormKey.ModKey))scope="undeclared-master";
    else if(!masterRecords.TryGetValue(l.FormKey,out var resolved)||resolved.Deleted){
     // Skyrim's PlayerRef (00000014) is supplied by the engine, not a master
@@ -122,7 +123,7 @@ static class Validate {
    var expectedTint=CapturedSkinTint.Resolve(original,female,planData.GetProperty("appearance").GetProperty("tintLighting"));
    Check(npc.TintLayers.Count==1,"NPC captured custom skin layer missing or duplicated");
    if(npc.TintLayers.Count==1){var tint=npc.TintLayers.Single();Check(tint.Index==expectedTint.Index&&tint.Color==expectedTint.Color&&tint.InterpolationValue==expectedTint.InterpolationValue&&!tint.Preset.HasValue,"Captured custom skin color/opacity was replaced or uses a race palette");}
-   var expectedLighting=System.Drawing.Color.FromArgb(unchecked((int)planData.GetProperty("appearance").GetProperty("tintLighting").GetProperty("color").GetUInt32()));
+   var expectedLighting=CapturedSkinTint.Lighting(planData.GetProperty("appearance").GetProperty("tintLighting"));
    Check(npc.TextureLighting is {} lighting&&lighting.R==expectedLighting.R&&lighting.G==expectedLighting.G&&lighting.B==expectedLighting.B,"Captured NPC texture-lighting RGB differs");
    if(!existingRace){
     var masks=(female?race.HeadData?.Female:race.HeadData?.Male)?.TintMasks;var asset=CapturedSkinTint.Asset(original,female,planData.GetProperty("appearance").GetProperty("tintLighting"));

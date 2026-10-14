@@ -1,4 +1,4 @@
-# Lazybones Follower Slopper 0.1.4: agent guide
+# Lazybones Follower Slopper 0.1.5: agent guide
 
 The Windows x64 application builds a follower ZIP from a selected Skyrim save
 and matching finished RaceMenu export. Operate its WinForms GUI. There is no
@@ -57,6 +57,14 @@ checks still apply and do not establish universal compatibility.
    Build details and the generated install instructions; captured meshes may
    not match the requested shape. Equipment omissions and output selections
    remain your choices.
+   When generated keyword assignments still require a mod after standalone
+   packaging, or their provider is unavailable, review Keep or remove
+   keywords. Keep keywords and build is the default; unavailable links remain
+   unresolved with warnings. Check individual generated-record assignments
+   and choose Remove selected keywords to remove those keywords, or cancel. Removal can change gameplay or
+   compatibility. Shared assignments, original mods and independently required
+   masters stay intact. The choice applies to all selected outputs; unchanged
+   choices are reused on retry, while changed source evidence requires review.
 4. Select applicable BodySlide build, OBody NG (as-is), or both; acknowledge
    asset-sharing responsibility before Build. One output makes a plain ZIP;
    both build versions for a FOMOD installer choice.
@@ -219,7 +227,7 @@ not public source. Editable code is in Gui/Foundation/Writer, Python stages
 in Stages, packagers in tools, and portrait/ICO in `assets/branding/icon-v2`.
 
 Keep `src/LICENSES.txt` and matching dependency-source access when redistributing.
-`Lazybones-Follower-Slopper-0.1.4-thirdparty-source.zip` contains dependency
+`Lazybones-Follower-Slopper-0.1.5-thirdparty-source.zip` contains dependency
 sources, full notices and binary/revision correspondence indexes. Published
 upstream binaries were not independently rebuilt; their own prerequisites
 apply. Mutagen upstream PreBuild deletes cache folders: use an isolated
@@ -227,7 +235,7 @@ upstream profile/cache. This guide adds no public release-packaging command
 or unattended follower-build interface.
 
 The Python native component metadata is in
-dependencies/python-native-components.json. The matching v0.1.4 thirdparty-source
+dependencies/python-native-components.json. The matching v0.1.5 thirdparty-source
 ZIP includes ctypes/libffi source, updated binary/component indexes and full
 notices alongside the existing dependency sources. Preserve that complete
 companion when redistributing application binaries.
@@ -243,3 +251,9 @@ skin, equipment and SMP mesh references. Custom races preserve captured skin tin
 inputs. After a BodySlide failure, a fresh mesh pair is used only when independent
 preset geometry checks pass; otherwise captured meshes remain a warned fallback.
 Reporter-specific colour differences and native crash causes remain unconfirmed.
+
+Partial-opacity skin tint and automatic saved reference scale are preserved.
+Standalone equipment can preserve verified injected keyword identities; unresolved
+keyword assignments offer keep, selected removal, or cancellation. Selections apply
+consistently across Prebuilt and OBody outputs. BodySlide presets support both,
+small and big endpoints with native document-order precedence.

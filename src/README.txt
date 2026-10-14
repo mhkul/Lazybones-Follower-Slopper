@@ -1,4 +1,4 @@
-Lazybones Follower Slopper 0.1.4 — Windows x64
+Lazybones Follower Slopper 0.1.5 — Windows x64
 
 Create a follower install ZIP from a Skyrim save and matching RaceMenu head
 export. Extract outside game, mod and input folders. Open the EXE directly
@@ -20,6 +20,11 @@ Unresolved links remain intact; a failed preset bake may use captured meshes.
 The ZIP names unavailable requested variants and required repairs. This output
 may not load or work in Skyrim. Unsafe paths and unwritable destinations still
 prevent delivery. Failed assessments remain failed in the build details.
+
+Remaining keyword dependencies default to Keep keywords and build; missing
+providers keep unresolved links with warnings. The recovery dialog can remove
+only checked keywords from the shown generated copies, with disclosed gameplay or
+compatibility changes, or cancel. Original mods are never edited.
 
 Install the generated ZIP with your mod manager and read its dependency
 instructions. Use MO2 Replace when switching variants. OBody/PDA and RSV
@@ -85,12 +90,12 @@ lease proof. Unknown legacy caches and .NET bootstrap extraction are retained.
 
 GPLv3, no warranty. Full terms/notices and asset-sharing responsibility:
 src/LICENSES.txt. Check asset permissions before distributing a follower.
-Keep matching Lazybones-Follower-Slopper-0.1.4-thirdparty-source.zip available
+Keep matching Lazybones-Follower-Slopper-0.1.5-thirdparty-source.zip available
 with the application and its source when redistributing. It contains exact
 dependency sources and correspondence indexes. Matching release files:
-https://github.com/mhkul/Lazybones-Follower-Slopper/releases/tag/v0.1.4
+https://github.com/mhkul/Lazybones-Follower-Slopper/releases/tag/v0.1.5
 Issue-reporting guide:
-https://github.com/mhkul/Lazybones-Follower-Slopper/blob/v0.1.4/docs/REPORTING_ISSUES.md
+https://github.com/mhkul/Lazybones-Follower-Slopper/blob/v0.1.5/docs/REPORTING_ISSUES.md
 
 References: https://www.gnu.org/licenses/gpl-3.0.html
 https://john95ac.github.io/website-documents-John95AC/OBody_NG_Preset_Distribution_Assistant_NG/index.html
@@ -107,3 +112,9 @@ skin, equipment and SMP mesh references. Custom races preserve captured skin tin
 inputs. After a BodySlide failure, a fresh mesh pair is used only when independent
 preset geometry checks pass; otherwise captured meshes remain a warned fallback.
 Reporter-specific colour differences and native crash causes remain unconfirmed.
+
+Partial-opacity skin tint and automatic saved reference scale are preserved.
+Standalone equipment can preserve verified injected keyword identities; unresolved
+keyword assignments offer keep, selected removal, or cancellation. Selections apply
+consistently across Prebuilt and OBody outputs. BodySlide presets support both,
+small and big endpoints with native document-order precedence.

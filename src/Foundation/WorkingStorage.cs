@@ -14,7 +14,7 @@ public static class WorkingStorage
     public const int HistoryCount = 8, HistoryDays = 7;
     public const long HistoryBytes = 128 * 1024 * 1024;
     private static readonly Regex AttemptName = new("^build-[a-f0-9]{32}$", RegexOptions.CultureInvariant);
-    private static readonly Regex StageName = new("^(prebuilt-[0-9]{1,3}|plugin-(generation|validation)-(prebuilt|obody|as-is))$", RegexOptions.CultureInvariant);
+    private static readonly Regex StageName = new("^(prebuilt-[0-9]{1,3}|plugin-(generation|validation)-(prebuilt|obody|as-is)(-keyword-choice)?)$", RegexOptions.CultureInvariant);
     public sealed record Owner(string Kind, string Directory, string Root, Guid Id, int Pid, long Start, DateTime CreatedUtc, string Request);
     public sealed record State(string Status, DateTime UpdatedUtc, bool SnapshotReady, bool PendingDelivery, string? SnapshotSha256 = null);
     public sealed record Item(string Entry, string Source, string Disposition, long Bytes, long IncludedBytes);
@@ -215,7 +215,7 @@ public static class WorkingStorage
     private static IEnumerable<(string Source, string Entry)> Candidates(string attempt)
     {
         string[] roots = ["result.json", "package-ready.json", "package-delivery.json", "input-plan.json", "record-inputs.json", "master-paths.json", "compatibility.json", "body-work.json", "body-project-choices.json", "head-stage.log", "head-stage-process.json", "head-stage-exit.json", "package-stage.log", "package-stage-process.json", "package-stage-exit.json", "package-stage-progress.json", "package-stage-result.json", "plugin-validation.json", "private-head-result.json"];
-        foreach (string s in roots) yield return (s, s);
+        foreach (string s in roots.Concat(new[]{"keyword-recovery-choice.json","keyword-recovery-response.json"})) yield return (s, s);
         foreach (string s in new[] { "body-stage/native-paths.json", "body-stage/body-result.json", "body-stage/tool/Log_BS.txt", "body-stage/tool/BuildSelection.xml", "body-stage/tool/Config.xml", "private-assets/asset-manifest.json", "packages/packages.json" }) yield return (s, s);
         foreach (string v in new[] { "prebuilt", "obody", "as-is" })
         {
@@ -227,6 +227,12 @@ public static class WorkingStorage
                 yield return (name, name);
             }
             yield return ("plugin/" + v + "/records.json", "plugin/" + v + "/records.json");
+            yield return ("plugin/" + v + "-keyword-choice/records.json", "plugin/" + v + "-keyword-choice/records.json");
+            string corrected=SafePaths.Below(attempt,"plugin/"+v+"-keyword-choice");
+            if(Directory.Exists(corrected)){
+                var correctedPlugins=Directory.EnumerateFiles(corrected).Where(p=>Path.GetExtension(p).Equals(".esp",StringComparison.OrdinalIgnoreCase)).Take(2).ToArray();
+                if(correctedPlugins.Length==1)yield return (Path.GetRelativePath(attempt,correctedPlugins[0]).Replace('\\','/'),"plugin/"+v+"-keyword-choice/follower.esp");
+            }
             string folder = SafePaths.Below(attempt, "plugin/" + v);
             if (Directory.Exists(folder))
             {

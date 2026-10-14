@@ -9,8 +9,8 @@ build, OBody NG (as-is), or both applicable outputs; both produce a FOMOD instal
 
 ## Install and use
 
-Download the [Windows x64 application packet](https://github.com/mhkul/Lazybones-Follower-Slopper/releases/download/v0.1.4/Lazybones-Follower-Slopper-0.1.4-windows-x64.zip)
-from [release v0.1.4](https://github.com/mhkul/Lazybones-Follower-Slopper/releases/tag/v0.1.4). Extract outside game, mod and input folders. Run the EXE
+Download the [Windows x64 application packet](https://github.com/mhkul/Lazybones-Follower-Slopper/releases/download/v0.1.5/Lazybones-Follower-Slopper-0.1.5-windows-x64.zip)
+from [release v0.1.5](https://github.com/mhkul/Lazybones-Follower-Slopper/releases/tag/v0.1.5). Extract outside game, mod and input folders. Run the EXE
 directly for physical/deployed Data, or register it in MO2 with empty Arguments
 and run through the intended existing profile. End-user Python and .NET are bundled.
 This source repository does not contain the EXE or dependency binaries.
@@ -80,18 +80,18 @@ than missing loose files. Bundled components and assets retain their own terms.
 Creating a follower grants no right to redistribute its source assets.
 
 When redistributing application binaries, supply matching application source
-and access to `Lazybones-Follower-Slopper-0.1.4-thirdparty-source.zip`, the separate
+and access to `Lazybones-Follower-Slopper-0.1.5-thirdparty-source.zip`, the separate
 dependency-source release asset containing full notices and exact binary/revision
 correspondence indexes. This repository does not replace that companion.
 Published upstream binaries were not independently rebuilt. Download matching
-[application source at v0.1.4](https://github.com/mhkul/Lazybones-Follower-Slopper/tree/v0.1.4/src) or its [tagged repository ZIP](https://github.com/mhkul/Lazybones-Follower-Slopper/archive/refs/tags/v0.1.4.zip),
-[dependency source](https://github.com/mhkul/Lazybones-Follower-Slopper/releases/download/v0.1.4/Lazybones-Follower-Slopper-0.1.4-thirdparty-source.zip)
-and [checksums in the release notes](https://github.com/mhkul/Lazybones-Follower-Slopper/releases/tag/v0.1.4)
+[application source at v0.1.5](https://github.com/mhkul/Lazybones-Follower-Slopper/tree/v0.1.5/src) or its [tagged repository ZIP](https://github.com/mhkul/Lazybones-Follower-Slopper/archive/refs/tags/v0.1.5.zip),
+[dependency source](https://github.com/mhkul/Lazybones-Follower-Slopper/releases/download/v0.1.5/Lazybones-Follower-Slopper-0.1.5-thirdparty-source.zip)
+and [checksums in the release notes](https://github.com/mhkul/Lazybones-Follower-Slopper/releases/tag/v0.1.5)
 from the same release. The Windows ZIP already includes buildable `src/`;
 the dependency-source ZIP is for rebuilding or redistribution and is not needed to run the app.
 
 For binary redistribution, preserve the [Python native component metadata](src/dependencies/python-native-components.json).
-The v0.1.4 dependency-source
+The v0.1.5 dependency-source
 companion includes the matching ctypes/libffi source, full notices and updated
 component indexes alongside the existing dependency sources.
 
@@ -106,3 +106,9 @@ skin, equipment and SMP mesh references. Custom races preserve captured skin tin
 inputs. After a BodySlide failure, a fresh mesh pair is used only when independent
 preset geometry checks pass; otherwise captured meshes remain a warned fallback.
 Reporter-specific colour differences and native crash causes remain unconfirmed.
+
+Partial-opacity skin tint and automatic saved reference scale are preserved.
+Standalone equipment can preserve verified injected keyword identities; unresolved
+keyword assignments offer keep, selected removal, or cancellation. Selections apply
+consistently across Prebuilt and OBody outputs. BodySlide presets support both,
+small and big endpoints with native document-order precedence.

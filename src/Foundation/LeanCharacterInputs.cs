@@ -15,7 +15,8 @@ public static class LeanCharacterInputs
             var values=placed?.Fields.GetValueOrDefault("XSCL",[])??[];
             if(values.Count>1||values.Any(x=>x.Length!=4))throw new InvalidDataException("Selected base player scale field is malformed");
             double scale=values.Count==0?1:BitConverter.ToSingle(values[0]);
-            if(scale!=1||actor.Scale!=1)throw new InvalidDataException("Unchanged saved scale has a non-unit selected player base scale; source-default settings handoff is required, no unit-scale substitution");
+            if(!double.IsFinite(scale)||scale<=0||scale>10||actor.Scale!=1)throw new InvalidDataException("Selected base player scale is invalid or the unchanged save's provisional scale is inconsistent");
+            actor=actor with{Scale=scale};
         }
         return actor;
     }

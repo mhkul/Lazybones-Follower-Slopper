@@ -20,6 +20,8 @@ QUALITY_ERRORS = (ValueError, struct.error, ET.ParseError, FileNotFoundError,
 
 
 MESSAGES = {
+    'keyword-removal': 'Selected keyword assignments were removed from generated records. Compatibility or gameplay may change; original source records are unchanged.',
+    'keyword-quality': 'A captured keyword dependency could not be verified. Explicit removals are listed separately; kept original links may remain unresolved.',
     'input-quality': 'Some selected inputs are incomplete or disagree. Available source content is preserved; appearance or behavior may differ.',
     'prebuilt-fallback': 'The requested preset bake was not completed for all targets. Available captured installed meshes are used for those targets; their shape may differ and OBody may be needed.',
     'prebuilt-native-exit': 'BodySlide exited abnormally after writing independently verified preset meshes. Those meshes are used; the process failure remains recorded and in-game appearance is unverified.',

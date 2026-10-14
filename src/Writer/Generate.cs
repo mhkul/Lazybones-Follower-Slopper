@@ -267,7 +267,8 @@ static class Generate {
   var defaults=lean?j.GetProperty("defaultMorphs"):j.GetProperty("morphs").GetProperty("default");var mf=defaults.GetProperty("morphs").EnumerateArray().Select(v=>v.GetSingle()).ToArray();npc.FaceMorph=new NpcFaceMorph();
   var morphNames=new[]{"NoseLongVsShort","NoseUpVsDown","JawUpVsDown","JawNarrowVsWide","JawForwardVsBack","CheeksUpVsDown","CheeksForwardVsBack","EyesUpVsDown","EyesInVsOut","BrowsUpVsDown","BrowsInVsOut","BrowsForwardVsBack","LipsUpVsDown","LipsInVsOut","ChinNarrowVsWide","ChinUpVsDown","ChinUnderbiteVsOverbite","EyesForwardVsBack","Unknown"};
   for(int i=0;i<morphNames.Length;i++)typeof(NpcFaceMorph).GetProperty(morphNames[i])!.SetValue(npc.FaceMorph,mf[i]);
-  var presets=defaults.GetProperty("presets").EnumerateArray().Select(v=>v.GetUInt32()).ToArray();npc.FaceParts=new NpcFaceParts{Nose=presets[0],Unknown=presets[1],Eyes=presets[2],Mouth=presets[3]};npc.TextureLighting=Color.FromArgb(unchecked((int)(lean?j.GetProperty("tintLighting"):j.GetProperty("tintInfo")[0]).GetProperty("color").GetUInt32()));
+  var presets=defaults.GetProperty("presets").EnumerateArray().Select(v=>v.GetUInt32()).ToArray();npc.FaceParts=new NpcFaceParts{Nose=presets[0],Unknown=presets[1],Eyes=presets[2],Mouth=presets[3]};npc.TextureLighting=lean?CapturedSkinTint.Lighting(j.GetProperty("tintLighting")):Color.FromArgb(unchecked((int)j.GetProperty("tintInfo")[0].GetProperty("color").GetUInt32()));
+  if(lean)notes.Add("Body texture-lighting RGB includes captured skin-tint opacity at native byte precision. Authored tint-layer RGB/opacity and composed FaceTint are preserved; runtime colour match remains unverified.");
   if(lean&&capturedSkinAsset!=null){npc.TintLayers.Add(CapturedSkinTint.Resolve((IRaceGetter)Source(selectedRace),female,j.GetProperty("tintLighting")));notes.Add("Follower-owned captured custom skin RGB/opacity binds to the selected race skin-tone asset in both race modes; private race retains that selected-sex asset. No palette substitution or shared RACE override. NPC opacity uses native whole-percent precision; runtime colour match remains unverified.");}
   var skin=new Armor(New(0x803),SkyrimRelease.SkyrimSE){EditorID="AF_SenSkin",Name="Sen private skin",BodyTemplate=new BodyTemplate{FirstPersonFlags=(BipedObjectFlag)0x8C},Race=new FormLinkNullable<IRaceGetter>(race.FormKey)};
   if(lean){var input=plan.GetProperty("skin");skin.DeepCopyIn((IArmorGetter)Source(Canonical(input.GetProperty("originalSkin").GetString()!)));skin.EditorID="AF_SenSkin";skin.Name="Sen private skin";skin.Race.SetTo(race.FormKey);skin.Armature.Clear();foreach(var addon in input.GetProperty("addons").EnumerateArray())skin.Armature.Add(new FormLink<IArmorAddonGetter>(Clone(Canonical(addon.GetString()!))));notes.Add("Lean ordinary skin and applicable addons copied from selected record winners, retaining source flags. "+input.GetProperty("runtimeAssignmentOmission").GetString());}
@@ -333,30 +334,96 @@ static class Generate {
   var registered=registry.GetProperty("localIds").EnumerateArray().Select(e=>e.GetUInt32()).Order().ToArray();
   if(!dst.EnumerateMajorRecords().Where(r=>r.FormKey.ModKey==plugin).Select(r=>r.FormKey.ID).Order().SequenceEqual(registered))throw new Exception("Stable ID registry requires an explicit allocation amendment");}
   string DependencyReason(IMajorRecord r,FormKey target)=>r is Race rr&&rr.ActorEffect?.Any(e=>e.FormKey==target)==true?"Captured race ability (SPLO); original gameplay/effect dependencies remain installed":existingRace&&target==selectedRace?"Captured existing race and its installed behavior/skeleton are required":"Required "+r.GetType().Name+" link; preserve original behavior, material or compatibility";
-  var dependencies=dst.EnumerateMajorRecords().SelectMany(r=>r.EnumerateFormLinks().Where(l=>!l.FormKey.IsNull&&l.FormKey.ModKey!=plugin).Select(l=>new {record=r.FormKey.ToString(),type=r.GetType().Name,target=l.FormKey.ToString(),master=l.FormKey.ModKey.FileName.String,reason=DependencyReason(r,l.FormKey)})).ToArray();
   var keywordProviders=new List<object>();var providerMasters=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-  if(lean)foreach(var link in dst.EnumerateMajorRecords().SelectMany(r=>r.EnumerateFormLinks()).Where(l=>!l.FormKey.IsNull&&l.FormKey.ModKey!=plugin&&l.Type==typeof(IKeywordGetter)).DistinctBy(l=>l.FormKey)){
+  var packagedInjectedKeywords=new List<object>();
+  var keywordRecoveryCandidates=new List<LeanKeywordCandidate>();var keywordRemovalAssignments=new List<LeanKeywordCandidate>();var keywordRemovals=new List<LeanKeywordRemoval>();
+  var requestedKeywordRemovals=lean&&plan.TryGetProperty("keywordRemovals",out var requestedKeywords)&&requestedKeywords.ValueKind==JsonValueKind.Array
+   ?JsonSerializer.Deserialize<LeanKeywordRemoval[]>(requestedKeywords.GetRawText(),Wire.Options)??[]:Array.Empty<LeanKeywordRemoval>();
+  IList<IFormLinkGetter<IKeywordGetter>>? Assignments(ISkyrimMajorRecord r)=>r switch {
+   Armor a=>a.Keywords,Weapon w=>w.Keywords,Ammunition a=>a.Keywords,Race r2=>r2.Keywords,MagicEffect e=>e.Keywords,Npc n=>n.Keywords,_=>null};
+  string Consumer(ISkyrimMajorRecord r)=>r.FormKey==race.FormKey?selectedRace.ToString():r.FormKey==skin.FormKey&&lean?Canonical(plan.GetProperty("skin").GetProperty("originalSkin").GetString()!).ToString():used.FirstOrDefault(p=>p.Value.FormKey==r.FormKey).Key.ToString();
+  string ConsumerName(ISkyrimMajorRecord r){var key=FormKey.Factory(Consumer(r));sources.TryGetValue(key,out var original);return (original switch{IArmorGetter a=>a.Name?.ToString(),IWeaponGetter w=>w.Name?.ToString(),IAmmunitionGetter a=>a.Name?.ToString(),IRaceGetter rr=>rr.Name?.ToString(),_=>original?.EditorID})??r.EditorID??r.FormKey.ToString();}
+  bool StandaloneIntent(ISkyrimMajorRecord r){
+   if(!used.TryGetValue(FormKey.Factory(Consumer(r)),out var original)||original is not (Armor or Weapon or Ammunition))return true;
+   var key=FormKey.Factory(Consumer(r));
+   var equipment=plan.GetProperty("equipment").EnumerateArray().FirstOrDefault(e=>Canonical(e.GetProperty("canonical").GetString()!)==key);
+   if(equipment.ValueKind==JsonValueKind.Undefined)return true;
+   var references=new List<string>();
+   if(equipment.TryGetProperty("ground",out var ground))references.AddRange(ground.EnumerateArray().Select(x=>"meshes/"+Norm(x.GetString()!).Replace("meshes/","")));
+   if(equipment.TryGetProperty("addons",out var addons))foreach(var addon in addons.EnumerateArray())foreach(string field in new[]{"thirdPerson","world","firstPerson"})if(addon.TryGetProperty(field,out var refs))references.AddRange(refs.EnumerateArray().Select(x=>"meshes/"+Norm(x.GetString()!).Replace("meshes/","")));
+   return references.Count==0||references.Any(reference=>!paths.TryGetValue(reference,out var target)||Norm(target)!=reference);
+  }
+  bool BaseMaster(ModKey key)=>new[]{"Skyrim.esm","Update.esm","Dawnguard.esm","HearthFires.esm","Dragonborn.esm"}.Contains(key.FileName.String,StringComparer.OrdinalIgnoreCase);
+  var equipmentKeywords=used.Values.Where(r=>r is IArmorGetter or IWeaponGetter or IAmmunitionGetter)
+   .SelectMany(r=>r.EnumerateFormLinks().Where(l=>l.Type==typeof(IKeywordGetter)).Select(l=>l.FormKey)).ToHashSet();
+  var keywordOrigins=new Dictionary<ModKey,HashSet<FormKey>>();
+  if(lean)foreach(var link in dst.EnumerateMajorRecords().SelectMany(r=>r.EnumerateFormLinks()).Where(l=>!l.FormKey.IsNull&&l.FormKey.ModKey!=plugin&&l.Type==typeof(IKeywordGetter)).DistinctBy(l=>l.FormKey).ToArray()){
    // Captured winning keywords retain their identity and their actual host.
    // Older compact inputs may prove an ordinary keyword in its origin only;
    // they cannot discover an injected provider by searching unrelated plugins.
    ModKey provider=link.FormKey.ModKey;
    if(sources.TryGetValue(link.FormKey,out var source)){
-    if(source is not IKeywordGetter){if(!bestEffort)throw new InvalidDataException("Captured keyword has wrong record type: "+link.FormKey);buildWarnings.Add(BestEffortBuild.Finding("keyword-provider","Captured keyword has wrong record type: "+link.FormKey,"plugin-quality","A keyword provider check failed. The original keyword link remains; behavior or loading may fail."));continue;}
+    if(source is not IKeywordGetter){if(!bestEffort)throw new InvalidDataException("Captured keyword has wrong record type: "+link.FormKey);buildWarnings.Add(BestEffortBuild.Finding("keyword-provider","Captured keyword has wrong record type: "+link.FormKey,"plugin-quality","A keyword provider check failed. The original keyword link remains; behavior or loading may fail."));}
     provider=sourceProviders[link.FormKey];
    }
-   bool providerVerified=false;
-   try{using var host=SkyrimMod.CreateFromBinaryOverlay(SelectedMaster.Require(inp,provider.FileName.String),SkyrimRelease.SkyrimSE);providerVerified=host.ModKey==provider&&host.Keywords.Any(k=>k.FormKey==link.FormKey&&!k.IsDeleted);}
+   bool providerVerified=false;string? verifiedKeywordEditor=null;
+   try{using var host=SkyrimMod.CreateFromBinaryOverlay(SelectedMaster.Require(inp,provider.FileName.String),SkyrimRelease.SkyrimSE);var verifiedKeyword=host.Keywords.FirstOrDefault(k=>k.FormKey==link.FormKey&&!k.IsDeleted);providerVerified=host.ModKey==provider&&verifiedKeyword!=null;if(providerVerified)verifiedKeywordEditor=verifiedKeyword!.EditorID;}
    catch(Exception e)when(bestEffort && e is InvalidDataException or FileNotFoundException or DirectoryNotFoundException){buildWarnings.Add(BestEffortBuild.Finding("keyword-provider",e.Message,"plugin-quality","A keyword provider could not be verified. Its original link remains; behavior or loading may fail."));}
    if(!providerVerified){if(!bestEffort)throw new InvalidDataException("Required selected keyword provider is absent or has changed: "+link.FormKey+" from "+provider);buildWarnings.Add(BestEffortBuild.Finding("keyword-provider","Unresolved keyword "+link.FormKey+" from "+provider,"plugin-quality","A keyword provider check failed. The original keyword link remains; behavior or loading may fail."));}
-   if(provider!=link.FormKey.ModKey){providerMasters.Add(provider.FileName.String);keywordProviders.Add(new{target=link.FormKey.ToString(),provider=provider.FileName.String,reason="Captured winning injected keyword; preserve identity and required defining provider"});}
+   bool supplied=false;
+   if(providerVerified&&provider!=link.FormKey.ModKey&&equipmentKeywords.Contains(link.FormKey)&&source is IKeywordGetter keyword&&!keyword.IsDeleted){
+    // Injected keywords must keep their shared FormKey and EditorID. A private
+    // new ID would break consumers that recognize the original keyword identity.
+    // Copy only a captured equipment keyword proven absent from its origin;
+    // ordinary keyword overrides still require their selected provider.
+    bool originVerified=false;
+    try{
+     if(!keywordOrigins.TryGetValue(link.FormKey.ModKey,out var originKeys)){
+      using var keywordOrigin=SkyrimMod.CreateFromBinaryOverlay(SelectedMaster.Require(inp,link.FormKey.ModKey.FileName.String),SkyrimRelease.SkyrimSE);
+      if(keywordOrigin.ModKey!=link.FormKey.ModKey)throw new InvalidDataException("Injected keyword origin identity differs: "+link.FormKey);
+      keywordOrigins[link.FormKey.ModKey]=originKeys=keywordOrigin.EnumerateMajorRecords().Select(r=>r.FormKey).ToHashSet();
+     }
+     originVerified=!originKeys.Contains(link.FormKey);
+    }catch(Exception e)when(bestEffort&&e is InvalidDataException or FileNotFoundException or DirectoryNotFoundException){buildWarnings.Add(BestEffortBuild.Finding("keyword-origin",e.Message,"plugin-quality","An injected keyword origin could not be verified. Its original provider remains required; standalone behavior is not claimed."));}
+    if(originVerified){
+     var copy=new Keyword(link.FormKey,SkyrimRelease.SkyrimSE);copy.DeepCopyIn(keyword);dst.Keywords.Add(copy);
+     packagedInjectedKeywords.Add(new{target=link.FormKey.ToString(),provider=provider.FileName.String,editor=keyword.EditorID,reason="Captured equipment keyword supplied in output at its unchanged injected identity; absent from origin master"});
+     supplied=true;
+    }
+   }
+   if(supplied)continue;
+   bool available=providerVerified&&(source==null||source is IKeywordGetter {IsDeleted:false});
+   foreach(var consumer in dst.EnumerateMajorRecords().OfType<ISkyrimMajorRecord>().Where(r=>Assignments(r)?.Any(k=>k.FormKey==link.FormKey)==true)){
+    if(available&&BaseMaster(provider)&&BaseMaster(link.FormKey.ModKey))continue;
+    string identity=BoundedBinary.Digest(System.Text.Encoding.UTF8.GetBytes(Consumer(consumer)+"|"+link.FormKey+"|"+provider+"|"+available+"|"+string.Join('|',inp.GetProperty("overlays").EnumerateArray().Select(o=>o.GetProperty("overlay").GetProperty("sha256").GetString()))));
+    string providerLabel=source==null&&!providerVerified?provider.FileName.String+" (origin namespace; defining provider unproved)":provider.FileName.String;
+    var candidate=new LeanKeywordCandidate(Consumer(consumer),consumer.FormKey.ToString(),ConsumerName(consumer),link.FormKey.ToString(),available?verifiedKeywordEditor:null,providerLabel,available?"Required dependency; automatic standalone closure unavailable":"Unavailable or unverified; keeping this link does not resolve it",identity);
+    // Packaging intent controls the prompt, never a previously selected edge.
+    // The complete assignment catalog independently validates source proof.
+    keywordRemovalAssignments.Add(candidate);
+    if(!available||StandaloneIntent(consumer))keywordRecoveryCandidates.Add(candidate);
+    if(requestedKeywordRemovals.Contains(candidate.Removal)){
+     var assignments=Assignments(consumer)!;for(int i=assignments.Count-1;i>=0;i--)if(assignments[i].FormKey==link.FormKey)assignments.RemoveAt(i);
+     keywordRemovals.Add(candidate.Removal);
+     buildWarnings.Add(BestEffortBuild.Finding("keyword-removal",candidate.ConsumerName+" ("+candidate.Consumer+"): removed assignment "+candidate.Keyword+" from generated copy "+candidate.GeneratedRecord+"; provider "+candidate.Provider,"keyword-removal","Selected keyword assignments were removed from generated records. Compatibility or gameplay may change; original source records are unchanged."));
+    }
+   }
+   if(!dst.EnumerateMajorRecords().Any(r=>r.EnumerateFormLinks().Any(l=>l.FormKey==link.FormKey)))continue;
+   if(provider!=link.FormKey.ModKey){providerMasters.Add(provider.FileName.String);keywordProviders.Add(new{target=link.FormKey.ToString(),provider=provider.FileName.String,reason="Captured winning keyword; preserve identity and required selected provider"});}
   }
+  LeanKeywordRecovery.Select(keywordRemovalAssignments.ToArray(),requestedKeywordRemovals);
+  if(keywordRemovals.Count>0)for(int i=0;i<buildWarnings.Count;i++)if(buildWarnings[i].Stage is "keyword-provider" or "keyword-origin")
+   buildWarnings[i]=buildWarnings[i] with{Warning="Captured keyword proof failed. Explicit removals are listed separately; original keyword links and provider dependencies remain where still required."};
+  var dependencies=dst.EnumerateMajorRecords().SelectMany(r=>r.EnumerateFormLinks().Where(l=>!l.FormKey.IsNull&&l.FormKey.ModKey!=plugin&&!dst.Keywords.ContainsKey(l.FormKey)).Select(l=>new {record=r.FormKey.ToString(),type=r.GetType().Name,target=l.FormKey.ToString(),master=l.FormKey.ModKey.FileName.String,reason=DependencyReason(r,l.FormKey)})).ToArray();
+  // Emitted injected records still need their namespace master in the header.
+  foreach(var keyword in dst.Keywords)providerMasters.Add(keyword.FormKey.ModKey.FileName.String);
   var required=dependencies.Select(d=>d.master).Concat(resolvedPlacement?.Masters??new[]{"Skyrim.esm"}).Concat(providerMasters).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(x=>x=="Skyrim.esm"?0:1).ThenBy(x=>x);
   var masters=lean?SelectedMaster.DependencyOrder(inp,required,bestEffort,buildWarnings):required.ToArray();
   foreach(string master in masters)dst.ModHeader.MasterReferences.Add(new MasterReference{Master=ModKey.FromFileName(master)});
   dst.BeginWrite.ToPath(Path.Combine(output,plugin.FileName)).WithLoadOrder(masters.Select(x=>ModKey.FromFileName(x)).Append(plugin)).WithDataFolder(SelectedMaster.HeaderFolder(inp,masters,bestEffort)).NoMastersListContentCheck().Write();
   PartialCell.Trim(Path.Combine(output,plugin.FileName),cell.FormKey,resolvedPlacement?.Worldspace==null?null:Canonical(resolvedPlacement.Worldspace));
   if(lean)SavedTransform.Preserve(Path.Combine(output,plugin.FileName),new[]{"position","rotation"}.SelectMany(k=>placement.GetProperty(k).EnumerateArray().Select(x=>x.GetSingle())).ToArray());
-  File.WriteAllText(Path.Combine(output,"records.json"),JsonSerializer.Serialize(new{plugin=plugin.FileName.String,npcLocalId=0x800,referenceLocalId=0x801,raceLocalId=existingRace?(int?)null:0x802,raceMode=existingRace?"existing":"private",outputRace=outputRace.ToString(),skinLocalId=0x803,masters,notes,dependencies,keywordProviders,buildWarnings,recordMap=map.Select(p=>new{source=p.Key.ToString(),target=p.Value.ToString()}),records=dst.EnumerateMajorRecords().Select(r=>new{type=r.GetType().Name,id=r.FormKey.ID,editor=r.EditorID,links=r.EnumerateFormLinks().Select(l=>l.FormKey.ToString()).Distinct().ToArray()})},JsonOptions));
+  File.WriteAllText(Path.Combine(output,"records.json"),JsonSerializer.Serialize(new{plugin=plugin.FileName.String,npcLocalId=0x800,referenceLocalId=0x801,raceLocalId=existingRace?(int?)null:0x802,raceMode=existingRace?"existing":"private",outputRace=outputRace.ToString(),skinLocalId=0x803,masters,notes,dependencies,keywordProviders,packagedInjectedKeywords,keywordRecoveryCandidates=keywordRecoveryCandidates.Select(c=>new{consumer=c.Consumer,generatedRecord=c.GeneratedRecord,consumerName=c.ConsumerName,keyword=c.Keyword,editorId=c.EditorId,provider=c.Provider,status=c.Status,sourceIdentity=c.SourceIdentity}),keywordRemovals=keywordRemovals.Select(r=>new{consumer=r.Consumer,keyword=r.Keyword,sourceIdentity=r.SourceIdentity}),buildWarnings,recordMap=map.Select(p=>new{source=p.Key.ToString(),target=p.Value.ToString()}),records=dst.EnumerateMajorRecords().Select(r=>new{type=r.GetType().Name,id=r.FormKey.ID,editor=r.EditorID,links=r.EnumerateFormLinks().Select(l=>l.FormKey.ToString()).Distinct().ToArray()})},JsonOptions));
   foreach(var o in owners)o.Dispose();Console.WriteLine(JsonSerializer.Serialize(new{records=dst.EnumerateMajorRecords().Count(),masters,nextId=next}));
  }
  static string Norm(string s)=>s.Replace('\\','/').ToLowerInvariant().TrimStart('/');

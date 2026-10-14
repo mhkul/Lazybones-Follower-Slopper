@@ -93,7 +93,7 @@ public static class FollowerSettingsPolicy
     public static readonly FollowerRecord FollowerVoices=R(0xC78E7,"FLST","VoicesFollowerAll"),MarriageVoices=R(0x47A00,"FLST","VoicesMarriageAll"),MarriageFaction=R(0x19809,"FACT","PotentialMarriageFaction");
     static FollowerOption S(string id,string label,params (uint Id,string Editor)[] spells)=>new(id,label,spells.Select(x=>R(x.Id,"SPEL",x.Editor)).ToArray(),string.Join(", ",spells.Select(x=>Regex.Replace(x.Editor,"([a-z])([A-Z])","$1 $2")))+". Casting and target choices depend on game AI; ally healing is unverified.");
     static string DefaultVoice(LeanActor actor)=>actor.Sex switch{0=>"MaleEvenToned",1=>"FemaleEvenToned",_=>throw new InvalidDataException("Unsupported saved actor sex: "+actor.Sex)};
-    public static FollowerSettings Defaults(LeanActor actor)=>new(ModName:DefaultModName(actor.Name),CharacterName:actor.Name,Scale:actor.Scale,VoiceId:DefaultVoice(actor));
+    public static FollowerSettings Defaults(LeanActor actor)=>new(ModName:DefaultModName(actor.Name),CharacterName:actor.Name,Scale:actor.ScaleFromChangeForm?actor.Scale:null,VoiceId:DefaultVoice(actor));
     public static string DefaultModName(string name)
     {
         // Only the suggested name is sanitized. User edits are validated verbatim.
@@ -136,9 +136,9 @@ public static class FollowerSettingsPolicy
         if(value.MarriageEligible&&!voice.MarriageSupported)throw new InvalidDataException("Selected voice lacks ordinary marriage dialogue support: "+value.VoiceId);
         string? plugin=null,ns=null;if(value.ModName!=null){ValidateModName(value.ModName);plugin=value.ModName+".esp";ns="autofollower/"+value.ModName.ToLowerInvariant();}
         value=value with{CharacterName=character,Scale=scale};
-        return new(value,plugin,ns,cls.Record,combat.Records.Single(),perks.Records,spells.Records,voice.Record,value.CharacterName==actor.Name?"selected save (or identical override)":"user override",settings?.Scale==null?"selected save":"user selection", "application follower defaults / explicit selections; not captured player gameplay");
+        return new(value,plugin,ns,cls.Record,combat.Records.Single(),perks.Records,spells.Records,voice.Record,value.CharacterName==actor.Name?"selected save (or identical override)":"user override",settings?.Scale==null?(actor.ScaleFromChangeForm?"selected save":"selected base player reference"):"user selection", "application follower defaults / explicit selections; not captured player gameplay");
     }
-    public static FollowerSettingsContext Context(LeanActor actor)=>new(Defaults(actor),Catalog with{Voices=Catalog.Voices.Where(x=>x.Sex==actor.Sex).ToArray()},"selected ESS character name",actor.ScaleFromChangeForm?"selected saved ACHR scale":"unchanged unit scale; selected base player reference proof required during build","application defaults: player-relative 1×, level 10–80, warrior/melee, no perks/spells, selected-sex even toned, marriage off");
+    public static FollowerSettingsContext Context(LeanActor actor)=>new(Defaults(actor),Catalog with{Voices=Catalog.Voices.Where(x=>x.Sex==actor.Sex).ToArray()},"selected ESS character name",actor.ScaleFromChangeForm?"selected saved ACHR scale":"selected base player reference scale; resolved during build unless explicitly overridden","application defaults: player-relative 1×, level 10–80, warrior/melee, no perks/spells, selected-sex even toned, marriage off");
     public static void RequireRecords(ResolvedFollowerSettings settings,Func<string,bool,LeanRecord> get)
     {
         foreach(var expected in new[]{settings.Class,settings.CombatStyle,settings.Voice,FollowerVoices}.Concat(settings.Perks).Concat(settings.Spells).Concat(settings.Values.MarriageEligible?[MarriageVoices,MarriageFaction]:[])){

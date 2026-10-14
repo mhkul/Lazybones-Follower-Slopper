@@ -7,6 +7,15 @@ using Mutagen.Bethesda.Skyrim;
 // identifies the selected race's tint asset; arbitrary RGB needs no TIAS palette.
 static class CapturedSkinTint
 {
+ public static Color Lighting(JsonElement tint)
+ {
+  uint color=tint.GetProperty("color").GetUInt32();uint alpha=color>>24;
+  // QNAM has no opacity. Fold the captured skin opacity into RGB around
+  // neutral grey, then truncate to the game's stored byte precision.
+  // Skin TINC/TINV and the composed FaceTint remain independent inputs.
+  int Channel(int shift)=>(int)((255*(255-alpha)+2*alpha*((color>>shift)&255))/510);
+  return Color.FromArgb(0,Channel(16),Channel(8),Channel(0));
+ }
  public static TintAssets Asset(IRaceGetter race,bool female,JsonElement tint)
  {
   if(tint.GetProperty("index").GetInt32()!=0)throw new InvalidDataException("Captured skin tint must be RaceMenu skin entry 0");

@@ -537,7 +537,7 @@ internal sealed class MainForm : Form
         var spells=Combo(FollowerSettingsPolicy.Catalog.SpellPackages.Select(x=>(x.Id,x.Label)).ToArray());
         Field(left,0,"Mod name",name,"Names the plugin, package and private asset folders.");
         Field(left,1,"Character",character,"Display name in game.");
-        Field(left,2,"Scale",scale,"Starts with the selected save's scale.");
+        Field(left,2,"Scale",scale,"Starts with the selected save's scale. An unchanged save uses its selected base player scale during build; editing this value overrides it.");
         var leveling=new FlowLayoutPanel{WrapContents=false};mode.Width=125;multiplier.Width=65;leveling.Controls.Add(mode);leveling.Controls.Add(new Label{Text="×",AutoSize=true,Padding=new Padding(0,5,0,0)});leveling.Controls.Add(multiplier);
         foreach(Control item in leveling.Controls)item.Margin=new Padding(1,0,1,0);
         Field(left,3,"Level",leveling,"Player-relative: multiplier × player level. Fixed: uses Minimum.");
@@ -579,7 +579,7 @@ internal sealed class MainForm : Form
     {
         c.ModName.TextChanged += (_, _) => Changed(index);
         c.CharacterName.TextChanged += (_, _) => Changed(index);
-        c.Scale.ValueChanged += (_, _) => Changed(index);
+        c.Scale.ValueChanged += (_, _) => { if (!_syncing && _settings != null) _settings = _settings with { Scale = (double)c.Scale.Value }; Changed(index); };
         c.Minimum.ValueChanged += (_, _) => Changed(index);
         c.Maximum.TextChanged += (_, _) => Changed(index);
         c.LevelMode.SelectedValueChanged += (_, _) =>
@@ -634,7 +634,7 @@ internal sealed class MainForm : Form
             {
                 ModName = c.ModName.Text,
                 CharacterName = c.CharacterName.Text,
-                Scale = (double)c.Scale.Value,
+                Scale = _settings.Scale.HasValue ? (double)c.Scale.Value : null,
                 MinimumLevel = decimal.ToInt32(c.Minimum.Value),
                 MaximumLevel = ParseMaximum(c.Maximum.Text),
                 LevelMode = c.LevelMode.SelectedValue?.ToString() ?? "player-relative",
@@ -826,7 +826,7 @@ internal sealed class MainForm : Form
                 JsonSerializer.Serialize(request, AutoFollower.Wire.Options),
                 JsonSerializer.Serialize(new { Environment = setup, Preset = preset, Writer = tools.Writer, WriterSha256 = Hashing.File(tools.Writer), InputPins = preview.Pins }, AutoFollower.Wire.Options), token);
             int exitCode = await Task.Run(() => LeanExportBuilder.Run(_requestPath, _operationOutput, token,
-                chooseAssets: choices => ChooseAssets(choices, token), inputPreview: preview, chooseBodyProject: choice => ChooseBodyProject(choice, token), recoverEquipment: choice => RecoverEquipment(choice, token)), token);
+                chooseAssets: choices => ChooseAssets(choices, token), inputPreview: preview, chooseBodyProject: choice => ChooseBodyProject(choice, token), recoverEquipment: choice => RecoverEquipment(choice, token), chooseKeywords: candidates => ChooseKeywords(candidates, token)), token);
             token.ThrowIfCancellationRequested();
             _progressTimer.Stop();
             await FinalizeBuildAsync(exitCode);
@@ -906,6 +906,21 @@ internal sealed class MainForm : Form
     {
         if(token.IsCancellationRequested)return false;
         return (bool)Invoke(new Func<bool>(()=>{using var dialog=new EquipmentRecoveryDialog(choice);return dialog.ShowDialog(_workDialog??(Form)this)==DialogResult.OK;}));
+    }
+
+    private string _keywordChoiceIdentity="";
+    private LeanKeywordRemoval[] _keywordChoiceRemovals=[];
+    private string KeywordChoiceIdentity(LeanKeywordCandidate[] candidates)=>_equipmentScope+"|"+string.Join('|',candidates.Select(c=>c.SourceIdentity).Order(StringComparer.Ordinal));
+    private LeanKeywordRemoval[]? ChooseKeywords(LeanKeywordCandidate[] candidates,CancellationToken token)
+    {
+        if(token.IsCancellationRequested)return null;
+        string identity=KeywordChoiceIdentity(candidates);
+        if(identity==_keywordChoiceIdentity)return LeanKeywordRecovery.Select(candidates,_keywordChoiceRemovals);
+        return (LeanKeywordRemoval[]?)Invoke(new Func<LeanKeywordRemoval[]?>(()=>{
+            using var dialog=new KeywordRecoveryDialog(candidates);
+            if(dialog.ShowDialog(_workDialog??(Form)this)!=DialogResult.OK){_operationCancel?.Cancel();return null;}
+            _keywordChoiceIdentity=identity;_keywordChoiceRemovals=dialog.Removals;return dialog.Removals;
+        }));
     }
 
     private LeanBodyProjectSelection? ChooseBodyProject(LeanBodyProjectChoice choice, CancellationToken token)

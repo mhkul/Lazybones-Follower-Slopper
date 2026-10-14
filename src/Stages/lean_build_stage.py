@@ -40,6 +40,17 @@ def norm(value, category=None):
     if ':' in value or any(p in ('', '.', '..') for p in value.split('/')): raise HostProtectionError('Unsafe asset path: ' + value)
     return value
 
+def preset_values(preset):
+    # Native LoadPresetFile reads document order. Each entry replaces only
+    # the endpoints it supplies; both supplies small and big at that point.
+    values = {}
+    for slider in preset.findall('SetSlider'):
+        name, size = slider.get('name'), slider.get('size')
+        value = float(slider.get('value'))
+        for endpoint in ('small', 'big') if size == 'both' else (size,):
+            values[(name, endpoint)] = value
+    return values
+
 def shader_signature(d, shape):
     # Compare all shader bytes and ordered texture slots. Only path spelling
     # and a validated creator prefix are canonicalized; other data stay exact.
@@ -64,6 +75,9 @@ class Build:
         self.overlay_notice = self.plan.get('overlayNotice') or dict(warning='RaceMenu overlays are not fully supported yet and may be missing from this follower.', playerRegistration=None, omittedOperations=[], detectionExhaustive=False)
         if self.plan['schema'] != 'lean-export-input-plan/v1' or self.owner['kind'] != 'T09B lean export build': raise ValueError('Unowned/unsupported compact plan')
         self.warnings = list(self.plan.get('buildWarnings') or [])
+        for row in self.warnings:
+            if row.get('stage') == 'keyword-capture':
+                row['warning'] = 'A captured keyword could not be resolved. Explicit removals are listed separately; kept original links may remain unresolved.'
         for gap in self.plan['gaps']: self.warn('input-quality','selected-input',gap['evidence'])
         outputs = self.plan.get('outputs')
         self.variants = outputs['variants'] if outputs else (['prebuilt', 'obody'] if self.plan['body'] else ['as-is'])
@@ -119,6 +133,87 @@ class Build:
         row = finding(code, stage, detail)
         if row not in self.warnings: self.warnings.append(row)
         return row
+
+    def keyword_candidates(self, manifest, variant, candidates):
+        # Gather real generated assignments for all selected output maps before
+        # the first choice, including candidates absent from a retained map.
+        rows = {(c['consumer'], c['keyword'], c['sourceIdentity']): dict(c, outputVariants=[variant]) for c in candidates}
+        review = self.owned(self.root/'keyword-review'); review.mkdir(exist_ok=True)
+        current = {a['assetReference']: a for a in self.assets if a['layer']=='shared'}
+        if variant == 'prebuilt': current.update({a['assetReference']: a for a in self.assets if a['layer']=='prebuilt'})
+        locations = {k:a['destination'] for k,a in current.items()}
+        for other in manifest['variants']:
+            if other == variant: continue
+            selected = {a['assetReference']: a for a in self.assets if a['layer']=='shared'}
+            if other == 'prebuilt': selected.update({a['assetReference']: a for a in self.assets if a['layer']=='prebuilt'})
+            if {k:a['destination'] for k,a in selected.items()} == locations:
+                for row in rows.values(): row['outputVariants'].append(other)
+                continue
+            path = review/(other+'-manifest.json'); self.dump(path, dict(manifest, assets=list(selected.values())))
+            output = review/other
+            try: self.run([self.writer,'generate-best-effort',path,self.root/'record-inputs.json',output],PROJECT,'keyword-review-'+other)
+            except StageFailed as error: self.warn('plugin-quality','keyword-review-'+other,error)
+            records = self.quality('plugin-quality','keyword-review-catalog-'+other,lambda:self.load(output/'records.json'),{})
+            if 'keywordRecoveryCandidates' not in records:
+                self.plan['keywordRecoveryCatalogIncomplete'] = True
+            for candidate in records.get('keywordRecoveryCandidates') or []:
+                key = (candidate['consumer'], candidate['keyword'], candidate['sourceIdentity'])
+                if key not in rows: rows[key] = dict(candidate, outputVariants=[])
+                rows[key]['outputVariants'].append(other)
+        for row in rows.values():
+            labels = ['BodySlide build' if v=='prebuilt' else 'OBody NG (as-is)' if v=='obody' else 'As-is' for v in row['outputVariants']]
+            row['status'] += '; review for selected outputs: ' + ', '.join(labels)
+        self.dump(review/'catalog.json', list(rows.values()))
+        # The Foundation handshake intentionally accepts only its strict schema.
+        return [{k:v for k,v in row.items() if k!='outputVariants'} for row in rows.values()]
+
+    def recover_keywords(self, manifest_path, plugin_root, variant, manifest=None):
+        if not self.plan.get('keywordRecoveryInteractive') or self.plan.get('keywordRecoveryCatalogIncomplete'):
+            return plugin_root
+        records = self.quality('plugin-quality','keyword-recovery-catalog',lambda:self.load(plugin_root/'records.json'),{})
+        candidates = records.get('keywordRecoveryCandidates') or []
+        if manifest is not None and not self.plan.get('keywordRecoveryReviewed'):
+            if 'keywordRecoveryCandidates' not in records: self.plan['keywordRecoveryCatalogIncomplete'] = True
+            candidates = self.keyword_candidates(manifest, variant, candidates)
+            if self.plan.get('keywordRecoveryCatalogIncomplete'):
+                self.warn('keyword-quality','keyword-recovery-catalog','Keyword-removal review could not cover every requested output. No new removal choices are applied for this attempt; existing selections remain writer-validated and other links are kept. Retry with complete generated catalogs to choose removals.')
+                self.dump(self.root/'input-plan.json', self.plan)
+                return plugin_root
+            if not candidates:
+                self.plan['keywordRecoveryReviewed'] = True
+                self.plan['keywordRecoveryReviewedIdentities'] = []
+                self.dump(self.root/'input-plan.json', self.plan)
+        reviewed = set(self.plan.get('keywordRecoveryReviewedIdentities') or [])
+        candidates = [c for c in candidates if c['sourceIdentity'] not in reviewed]
+        if not candidates:
+            return plugin_root
+        # One owned handshake after real generated consumers are known. The
+        # caller supplies an explicit selection; headless generation never waits.
+        request = self.owned(self.root/'keyword-recovery-choice.json')
+        temporary = self.owned(self.root/'keyword-recovery-choice.tmp')
+        response = self.owned(self.root/'keyword-recovery-response.json')
+        request.unlink(missing_ok=True); response.unlink(missing_ok=True)
+        self.dump(temporary, candidates); temporary.replace(request)
+        while not response.is_file():
+            self.check(); time.sleep(0.1)
+        selected = self.load(response)
+        allowed = [{k:c[k] for k in ('consumer','keyword','sourceIdentity')} for c in candidates]
+        if not isinstance(selected, list) or any(r not in allowed for r in selected):
+            raise ValueError('Keyword recovery selection differs from current generated assignments')
+        self.plan['keywordRemovals'] = [r for r in self.plan.get('keywordRemovals') or [] if r not in selected] + selected
+        self.plan['keywordRecoveryReviewed'] = True
+        self.plan['keywordRecoveryReviewedIdentities'] = sorted(reviewed | {c['sourceIdentity'] for c in candidates})
+        self.dump(self.root/'input-plan.json', self.plan)
+        if not selected:
+            return plugin_root
+        corrected = plugin_root.parent/(variant+'-keyword-choice')
+        self.run([self.writer,'generate-best-effort',manifest_path,self.root/'record-inputs.json',corrected],PROJECT,'plugin-generation-'+variant+'-keyword-choice')
+        # Earlier capture findings stay failed, but no longer assert that every
+        # input link survives a later explicit generated-assignment removal.
+        for row in self.warnings:
+            if row.get('stage') == 'keyword-capture':
+                row['warning'] = 'A captured keyword could not be resolved. See the explicit generated keyword removals; other original links remain where kept.'
+        return corrected
 
     def quality(self, code, stage, operation, fallback=None):
         self.check()
@@ -300,7 +395,8 @@ class Build:
         originals = [p for p in preset_doc.findall('Preset') if p.get('name') == body['assignedPreset']]
         if len(originals) != 1: raise ValueError('Authored preset identity is not unique')
         preset = copy.deepcopy(originals[0]); preset.set('name', 'AutoFollower_' + self.uuid + '_' + body['assignedPreset'])
-        values = {(s.get('name'), s.get('size')): float(s.get('value')) for s in preset.findall('SetSlider')}
+        authored_count = len({(s.get('name'), s.get('size')) for s in preset.findall('SetSlider')})
+        values = preset_values(preset)
         completions = {}; completion_basis = {}
         for node in sets:
             for slider in node.findall('Slider'):
@@ -314,7 +410,7 @@ class Build:
         for (name, endpoint), value in sorted(completions.items()): ET.SubElement(preset, 'SetSlider', dict(name=name, size=endpoint, value=str(value)))
         completed = ET.Element('SliderPresets'); completed.append(preset); completed_bytes = ET.tostring(completed, encoding='utf-8', xml_declaration=True)
         (project / 'SliderPresets').mkdir(); (project / 'SliderPresets/Sen.xml').write_bytes(authored)
-        self.preset = dict(original=authored, completed=completed_bytes, runtimeName=preset.get('name'), originalValues=len(values), defaults=[dict(name=k[0], size=k[1], value=v, projects=completion_basis[k]) for k, v in sorted(completions.items())])
+        self.preset = dict(original=authored, completed=completed_bytes, runtimeName=preset.get('name'), originalValues=authored_count, defaults=[dict(name=k[0], size=k[1], value=v, projects=completion_basis[k]) for k, v in sorted(completions.items())])
         _, choices_raw = self.staged('CalienteTools/BodySlide/BuildSelection.xml'); choice_tree = ET.fromstring(choices_raw)
         filtered = ET.Element('BuildSelection')
         for node in choice_tree.iter('ZapChoice'):
@@ -388,7 +484,7 @@ class Build:
                 failed=dict(project=row['name'],passed=False,presetBaked=False,installedFallback=True,error=str(error))
                 if native_failure is not None:failed.update(nativeExitCode=native_failure.exit_code,processPassed=False,independentGeometryPassed=False)
                 validation.append(failed)
-        self.dump(base / 'body-result.json', dict(projects=body['projects'], prebuiltPairs=len(self.prebuilt)//2, authoredValuesPreserved=len(values), defaults=self.preset['defaults'], garmentChoice=dict(zap='Remove Lower Torso Armor', choice=False, authority='D51'), validation=validation, inputRelocations=relocations, obodyGeometryGenerated=False))
+        self.dump(base / 'body-result.json', dict(projects=body['projects'], prebuiltPairs=len(self.prebuilt)//2, authoredValuesPreserved=authored_count, defaults=self.preset['defaults'], garmentChoice=dict(zap='Remove Lower Torso Armor', choice=False, authority='D51'), validation=validation, inputRelocations=relocations, obodyGeometryGenerated=False))
         self.dump(self.root/'body-work.json', dict(route='XML-prebuilt', bodySlideInvoked=True, projectsBuilt=len(self.prebuilt)//2, selectedVariants=self.variants))
 
     def prebuilt_outputs(self, row, node, project, dest, values, choices, index, native_failure=None):
@@ -583,6 +679,7 @@ class Build:
                     if not (variant_plugin_root/self.plugin).is_file():
                         self.warn('variant-unavailable',variant,error);continue
                     self.warn('plugin-quality',variant,error)
+                variant_plugin_root=self.recover_keywords(manifest_path,variant_plugin_root,variant,manifest)
                 validation_path=self.root/('plugin-validation-'+variant+'.json')
                 self.quality('plugin-quality',variant,lambda:self.run([self.writer,'validate-best-effort',variant_plugin_root/self.plugin,self.root/'master-paths.json',validation_path,self.root/'input-plan.json',manifest_path],PROJECT,'plugin-validation-'+variant))
                 plugin_bytes=self.read(variant_plugin_root/self.plugin); plugin_validation=self.load(validation_path) if validation_path.is_file() else dict(passed=False,checksComplete=False)
@@ -590,8 +687,10 @@ class Build:
                 plugin_validation['masters']=read_bytes(plugin_bytes)['masters']
                 record_result=self.quality('plugin-quality','writer-details-'+variant,lambda:self.load(variant_plugin_root/'records.json'),dict(dependencies=[],buildWarnings=[]))
                 for row in record_result.get('buildWarnings',[]):
-                    self.warn('plugin-quality',variant,row.get('detail') or row.get('Detail') or 'Writer quality assessment failed')
+                    code='keyword-removal' if (row.get('category') or row.get('Category'))=='keyword-removal' else 'keyword-quality' if (row.get('stage') or row.get('Stage')) in ('keyword-provider','keyword-origin') else 'plugin-quality'
+                    self.warn(code,variant,row.get('detail') or row.get('Detail') or 'Writer quality assessment failed')
                 plugin_validation['requiredMasterReasons']=[d for d in record_result['dependencies'] if d['master']!='Skyrim.esm']
+                plugin_validation['requiredMasterReasons'].extend(dict(master=p['provider'],target=p['target'],reason=p['reason']) for p in record_result.get('keywordProviders',[]) if p['provider']!='Skyrim.esm')
                 self.quality('plugin-quality','settings-'+variant,lambda:require_settings_readback(self.plan,plugin_validation))
                 plugin_validation['savedPlacement']=self.quality('plugin-quality','placement-'+variant,lambda:validate_placement(plugin_bytes,self.plan),dict(passed=False,checksComplete=False))
                 if not packages:
@@ -646,6 +745,8 @@ class Build:
             external_data={r['reference']:external_data[r['reference']] for r in external}
             classification='Contains unresolved original asset references' if validation['missingReferences'] else 'Mixed / retained dependencies' if external else 'Standalone assets'
             declaration='\nPackaging: '+classification+'. Required plugin masters: '+', '.join(plugin_validation['masters'])+'\n'
+            for removal in self.plan.get('keywordRemovals') or []:
+                declaration+='Explicit keyword assignment removed from generated copy '+removal['consumer']+' :: '+removal['keyword']+'. Compatibility/gameplay may change; original mods unchanged.\n'
             for row in external:
                 s=row['authority']; declaration+='Retain '+row['reference']+' from '+s['backing']+((' :: '+s['archiveMember']) if s.get('archiveMember') else '')+'; SHA256 '+s['sha256']+(('; '+s['activation']) if s.get('activation') else '')+'\n'
             race_mode=self.plan.get('followerSettings',{}).get('values',{}).get('raceMode','private')
@@ -691,7 +792,7 @@ class Build:
             payload_hash=hashlib.sha256()
             for name,raw in sorted(data.items()):payload_hash.update(name.encode('utf-8')+b'\0'+hashlib.sha256(raw).digest())
             skin_notice='Base feet and other non-body skin use captured installed geometry in every output, with private reference edits only. Only bodies and outfits affected by the applied OBody preset receive a BodySlide build. The Prebuilt output does not bake base foot morphs; recipient OBody foot behavior remains unverified.' if self.plan['skin'].get('asIsFootModels') else None
-            packages.append(dict(variant=variant, buildWarnings=list(self.warnings),presetAvailable=self.preset is not None,presetBakeComplete=variant!='prebuilt' or not any(w['category'] in ('prebuilt-fallback','prebuilt-quality') for w in self.warnings), overlayNotice=self.overlay_notice, materialConflicts=self.plan.get("materialConflicts") or [], runtimeAssignmentWarnings=self.plan.get("runtimeAssignmentWarnings") or [], assetRepairWarnings=self.plan.get("assetRepairWarnings") or [], equipmentOmissions=self.plan.get("equipmentOmissions") or [], missingReferences=list(self.missing.values()), skinGeometryNotice=skin_notice, classification=classification,followerSettings=self.plan.get('followerSettings'),assetResults=asset_results, retainedDependencies=dependencies,requiredMasters=plugin_validation['masters'],hostRequirements=host_requirements,compatibility=compatibility,pluginValidation=plugin_validation,payloadMapSha256=payload_hash.hexdigest().upper(),members=len(data),uncompressedBytes=sum(map(len,data.values())), validation=validation, faceGenReferenceProof=proof))
+            packages.append(dict(variant=variant, buildWarnings=list(self.warnings),presetAvailable=self.preset is not None,presetBakeComplete=variant!='prebuilt' or not any(w['category'] in ('prebuilt-fallback','prebuilt-quality') for w in self.warnings), overlayNotice=self.overlay_notice, materialConflicts=self.plan.get("materialConflicts") or [], runtimeAssignmentWarnings=self.plan.get("runtimeAssignmentWarnings") or [], assetRepairWarnings=self.plan.get("assetRepairWarnings") or [], equipmentOmissions=self.plan.get("equipmentOmissions") or [], keywordRemovals=self.plan.get("keywordRemovals") or [], missingReferences=list(self.missing.values()), skinGeometryNotice=skin_notice, classification=classification,followerSettings=self.plan.get('followerSettings'),assetResults=asset_results, retainedDependencies=dependencies,requiredMasters=plugin_validation['masters'],hostRequirements=host_requirements,compatibility=compatibility,pluginValidation=plugin_validation,payloadMapSha256=payload_hash.hexdigest().upper(),members=len(data),uncompressedBytes=sum(map(len,data.values())), validation=validation, faceGenReferenceProof=proof))
         def applicable_warnings(variant):
             def applies(row):
                 if row.get('category')=='variant-unavailable': return True
