@@ -24,6 +24,7 @@ static class Validate {
    var destination=asset.GetProperty("destination").GetString()!.Replace('/','\\');
    retained.Add(destination.StartsWith("meshes\\",StringComparison.OrdinalIgnoreCase)?destination[7..]:destination);}}
   bool ValidModel(string path)=>path.StartsWith("autofollower\\",StringComparison.OrdinalIgnoreCase)||retained.Contains(path)||warnedMissing.Contains(AssetKey(path,"meshes"));
+  Check(mod.HeadParts.All(h=>!h.Flags.HasFlag(HeadPart.Flag.Playable)),"Generated head parts must not be playable");
   Check(mod.ModHeader.Flags.HasFlag(SkyrimModHeader.HeaderFlag.Small),"Missing ESL flag");
   Check(mod.ModHeader.Stats.Version==1.7f,"Wrong legacy header");
   var locals=records.Values.Where(r=>r.FormKey.ModKey==mod.ModKey).ToArray();
@@ -66,6 +67,7 @@ static class Validate {
   }
   bool existingRace=planPath!=null&&LeanRacePolicy.IsExisting(SettingsWriter.Resolve(planData));
   var npc=mod.Npcs.Single();IRaceGetter race;
+  Check(mod.Armors.Single(a=>a.FormKey==npc.WornArmor.FormKey).Name?.String==npc.Name?.String+" private skin","Private skin name differs from follower name");
   if(planPath!=null&&manifestPath!=null){
    var captured=JsonDocument.Parse(File.ReadAllText(Path.Combine(Path.GetDirectoryName(Path.GetFullPath(planPath))!,"record-inputs.json"))).RootElement;
    var material=mod.TextureSets.Single(t=>t.FormKey==npc.HeadTexture.FormKey);

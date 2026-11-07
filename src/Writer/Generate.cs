@@ -37,6 +37,7 @@ static class Generate {
   }
   var plugin=ModKey.FromFileName(m.GetProperty("pluginIdentity").GetString()!);
   string Label(string role,string? name=null,uint? local=null)=>ReadableIds.For(plugin.FileName.String,role,name,local);
+  string followerName=followerSettings?.Values.CharacterName??(lean?actor.GetProperty("name").GetString():m.GetProperty("actor").TryGetProperty("name",out var legacyName)?legacyName.GetString():null)??"Follower";
   if(followerSettings?.PluginName!=null&&plugin.FileName.String!=followerSettings.PluginName)throw new Exception("Named plugin identity differs from settings");
   var dst=new SkyrimMod(plugin,SkyrimRelease.SkyrimSE); dst.ModHeader.Flags=SkyrimModHeader.HeaderFlag.Small;dst.ModHeader.Stats.Version=1.7f;
   dst.ModHeader.Author="Skyrim Auto Follower";dst.ModHeader.Description="Generated follower from selected save assets; body variants share identity.";
@@ -212,7 +213,7 @@ static class Generate {
    }
    return fk;
   }
-  var npc=new Npc(New(0x800),SkyrimRelease.SkyrimSE){EditorID="AF_SenAbersha",Name="Sen Abersha",Weight=0,Height=1,AIData=new AIData {Aggression=Aggression.Unaggressive,Confidence=Confidence.Brave,Assistance=Assistance.HelpsFriendsAndAllies,EnergyLevel=50,Responsibility=Responsibility.NoCrime}};
+  var npc=new Npc(New(0x800),SkyrimRelease.SkyrimSE){EditorID=Label("NPC",followerName),Name=followerName,Weight=0,Height=1,AIData=new AIData {Aggression=Aggression.Unaggressive,Confidence=Confidence.Brave,Assistance=Assistance.HelpsFriendsAndAllies,EnergyLevel=50,Responsibility=Responsibility.NoCrime}};
   // Config string filters must identify only this follower, including when
   // several generated followers are installed. Stable across alternative routes.
   if(lean&&plan.TryGetProperty("outputs",out var selectedOutputs)&&selectedOutputs.ValueKind!=JsonValueKind.Null)
@@ -227,7 +228,7 @@ static class Generate {
   npc.Factions.Add(new RankPlacement{Faction=new FormLink<IFactionGetter>(ByEditor(vanilla.Factions,"PotentialFollowerFaction")),Rank=0});
   npc.Factions.Add(new RankPlacement{Faction=new FormLink<IFactionGetter>(ByEditor(vanilla.Factions,"CurrentFollowerFaction")),Rank=-1});
   npc.Packages.Add(new FormLink<IPackageGetter>(ByEditor(vanilla.Packages,"DefaultSandboxEditorLocation512")));
-  var race=new Race(New(0x802),SkyrimRelease.SkyrimSE);race.DeepCopyIn((IRaceGetter)Source(selectedRace));race.EditorID="AF_PrivateCapturedRace";race.IsCompressed=false;
+  var race=new Race(New(0x802),SkyrimRelease.SkyrimSE);race.DeepCopyIn((IRaceGetter)Source(selectedRace));race.EditorID=Label("Race");race.IsCompressed=false;
   if(lean&&!race.Flags.HasFlag(Race.Flag.Playable))throw new Exception("Selected winning race is not playable: "+selectedRace);
   if(!existingRace)foreach(var ability in privateRaceRecords.OrderBy(x=>x.ID))Clone(ability);
   if(!existingRace){race.Skin.SetTo(New(0x803));if(!lean&&race.ArmorRace.IsNull)race.ArmorRace.SetTo(selectedRace);if(!lean&&race.MorphRace.IsNull)race.MorphRace.SetTo(selectedRace);}
@@ -254,9 +255,9 @@ static class Generate {
    var runtime=h.GetProperty("formId").GetUInt32();var canonical=m.GetProperty("actor").GetProperty("headParts").EnumerateArray().First(x=>x.GetProperty("runtimeId").GetUInt32()==runtime);
    npc.HeadParts.Add(new FormLink<IHeadPartGetter>(map[K(canonical.GetProperty("plugin").GetString()!,canonical.GetProperty("localId").GetUInt32())]));
   }}
-  var hair=new ColorRecord(New(0x806),SkyrimRelease.SkyrimSE){EditorID="AF_SenHairColor",Color=Color.FromArgb(unchecked((int)(0xFF000000|(lean?j.GetProperty("hairColor"):j.GetProperty("actor").GetProperty("hairColor")).GetUInt32())))};dst.Colors.Add(hair);npc.HairColor.SetTo(hair.FormKey);
-  var hptex=new TextureSet(New(0x807),SkyrimRelease.SkyrimSE){EditorID="AF_SenHeadTexture"};
-  if(lean&&actor.GetProperty("faceTextureSet").GetString() is {Length:>0} capturedFaceTexture){hptex.DeepCopyIn((ITextureSetGetter)Source(Canonical(capturedFaceTexture)));hptex.EditorID="AF_SenHeadTexture";hptex.IsCompressed=false;}
+  var hair=new ColorRecord(New(0x806),SkyrimRelease.SkyrimSE){EditorID=Label("HairColor"),Color=Color.FromArgb(unchecked((int)(0xFF000000|(lean?j.GetProperty("hairColor"):j.GetProperty("actor").GetProperty("hairColor")).GetUInt32())))};dst.Colors.Add(hair);npc.HairColor.SetTo(hair.FormKey);
+  var hptex=new TextureSet(New(0x807),SkyrimRelease.SkyrimSE){EditorID=Label("HeadTexture")};
+  if(lean&&actor.GetProperty("faceTextureSet").GetString() is {Length:>0} capturedFaceTexture){hptex.DeepCopyIn((ITextureSetGetter)Source(Canonical(capturedFaceTexture)));hptex.EditorID=Label("HeadTexture");hptex.IsCompressed=false;}
   if(j.GetProperty("faceTextures").EnumerateArray().Any(t=>t.GetProperty("index").GetUInt32()>7))throw new Exception("RaceMenu face texture slot above 7 has no supported Skyrim TXST field mapping; preserve the export and resolve this concrete slot before generation");
   string? Tex(uint slot){var textures=j.GetProperty("faceTextures").EnumerateArray().Where(t=>t.GetProperty("index").GetUInt32()==slot).ToArray();return textures.Length==0?null:ResolveAsset(textures.Single().GetProperty("texture").GetString()!,"textures");}
   // RaceMenu stores shader slots, not the TXST subrecord numbering. Preserve
@@ -270,8 +271,9 @@ static class Generate {
   var presets=defaults.GetProperty("presets").EnumerateArray().Select(v=>v.GetUInt32()).ToArray();npc.FaceParts=new NpcFaceParts{Nose=presets[0],Unknown=presets[1],Eyes=presets[2],Mouth=presets[3]};npc.TextureLighting=lean?CapturedSkinTint.Lighting(j.GetProperty("tintLighting")):Color.FromArgb(unchecked((int)j.GetProperty("tintInfo")[0].GetProperty("color").GetUInt32()));
   if(lean)notes.Add("Body texture-lighting RGB includes captured skin-tint opacity at native byte precision. Authored tint-layer RGB/opacity and composed FaceTint are preserved; runtime colour match remains unverified.");
   if(lean&&capturedSkinAsset!=null){npc.TintLayers.Add(CapturedSkinTint.Resolve((IRaceGetter)Source(selectedRace),female,j.GetProperty("tintLighting")));notes.Add("Follower-owned captured custom skin RGB/opacity binds to the selected race skin-tone asset in both race modes; private race retains that selected-sex asset. No palette substitution or shared RACE override. NPC opacity uses native whole-percent precision; runtime colour match remains unverified.");}
-  var skin=new Armor(New(0x803),SkyrimRelease.SkyrimSE){EditorID="AF_SenSkin",Name="Sen private skin",BodyTemplate=new BodyTemplate{FirstPersonFlags=(BipedObjectFlag)0x8C},Race=new FormLinkNullable<IRaceGetter>(race.FormKey)};
-  if(lean){var input=plan.GetProperty("skin");skin.DeepCopyIn((IArmorGetter)Source(Canonical(input.GetProperty("originalSkin").GetString()!)));skin.EditorID="AF_SenSkin";skin.Name="Sen private skin";skin.Race.SetTo(race.FormKey);skin.Armature.Clear();foreach(var addon in input.GetProperty("addons").EnumerateArray())skin.Armature.Add(new FormLink<IArmorAddonGetter>(Clone(Canonical(addon.GetString()!))));notes.Add("Lean ordinary skin and applicable addons copied from selected record winners, retaining source flags. "+input.GetProperty("runtimeAssignmentOmission").GetString());}
+  string skinName=followerName+" private skin";
+  var skin=new Armor(New(0x803),SkyrimRelease.SkyrimSE){EditorID=Label("Skin"),Name=skinName,BodyTemplate=new BodyTemplate{FirstPersonFlags=(BipedObjectFlag)0x8C},Race=new FormLinkNullable<IRaceGetter>(race.FormKey)};
+  if(lean){var input=plan.GetProperty("skin");skin.DeepCopyIn((IArmorGetter)Source(Canonical(input.GetProperty("originalSkin").GetString()!)));skin.EditorID=Label("Skin");skin.Name=skinName;skin.Race.SetTo(race.FormKey);skin.Armature.Clear();foreach(var addon in input.GetProperty("addons").EnumerateArray())skin.Armature.Add(new FormLink<IArmorAddonGetter>(Clone(Canonical(addon.GetString()!))));notes.Add("Lean ordinary skin and applicable addons copied from selected record winners, retaining source flags. "+input.GetProperty("runtimeAssignmentOmission").GetString());}
   else{foreach(var id in new uint[]{0x19386,0x1938C,0x1938D}) {
    var fk=Clone(K("Skyrim.esm",id));var aa=(ArmorAddon)used[K("Skyrim.esm",id)];
    // Winning model shaders carry the captured female skin materials. Vanilla TXST would override them.
@@ -281,7 +283,7 @@ static class Generate {
   skin.Armature.Add(new FormLink<IArmorAddonGetter>(Clone(K("TheNewGentleman.esp",0x812))));
   notes.Add("Captured runtime skin is TNG-generated with an empty disk armature; private skin explicitly binds captured female DarkElf body/hands/feet plus captured female blank addon. No TNG runtime dependency is required for this binding.");}
   skin.Race.SetTo(outputRace);dst.Armors.Add(skin);npc.WornArmor.SetTo(skin.FormKey);npc.Race.SetTo(outputRace);
-  var outfit=new Outfit(New(0x804),SkyrimRelease.SkyrimSE){EditorID="AF_SenOutfit",Items=new()};
+  var outfit=new Outfit(New(0x804),SkyrimRelease.SkyrimSE){EditorID=Label("Outfit"),Items=new()};
   if(lean){foreach(var eq in plan.GetProperty("equipment").EnumerateArray()){
    var key=Clone(Canonical(eq.GetProperty("canonical").GetString()!));
    if(eq.TryGetProperty("type",out var type)&&type.GetString() is "WEAP" or "AMMO"){
@@ -291,8 +293,8 @@ static class Generate {
   else{var rawToCanonical=JsonDocument.Parse(File.ReadAllText(m.GetProperty("actor").GetProperty("canonicalRecordSource").GetProperty("path").GetString()!)).RootElement.GetProperty("slices").EnumerateArray().ToDictionary(s=>s.GetProperty("canonical").GetProperty("runtimeId").GetUInt32(),s=>K(s.GetProperty("canonical").GetProperty("plugin").GetString()!,s.GetProperty("canonical").GetProperty("localId").GetUInt32()));
   foreach(var eq in m.GetProperty("equipment").EnumerateArray().Where(e=>e.GetProperty("included").GetBoolean()))outfit.Items.Add(new FormLink<IOutfitTargetGetter>(Clone(rawToCanonical[Convert.ToUInt32(eq.GetProperty("item").GetString(),16)])));}
   dst.Outfits.Add(outfit);npc.DefaultOutfit.SetTo(outfit.FormKey);dst.Npcs.Add(npc);if(!existingRace)dst.Races.Add(race);
-  var races=new FormList(New(0x80B),SkyrimRelease.SkyrimSE){EditorID="AF_SenValidRaces"};races.Items.Add(new FormLink<ISkyrimMajorRecordGetter>(outputRace));dst.FormLists.Add(races);
-  var rel=new Relationship(New(0x805),SkyrimRelease.SkyrimSE){EditorID="AF_SenPlayerRelationship",Rank=Relationship.RankType.Ally};rel.Parent.SetTo(npc.FormKey);rel.Child.SetTo(K("Skyrim.esm",7));dst.Relationships.Add(rel);
+  var races=new FormList(New(0x80B),SkyrimRelease.SkyrimSE){EditorID=Label("ValidRaces")};races.Items.Add(new FormLink<ISkyrimMajorRecordGetter>(outputRace));dst.FormLists.Add(races);
+  var rel=new Relationship(New(0x805),SkyrimRelease.SkyrimSE){EditorID=Label("Relationship"),Rank=Relationship.RankType.Ally};rel.Parent.SetTo(npc.FormKey);rel.Child.SetTo(K("Skyrim.esm",7));dst.Relationships.Add(rel);
   var resolvedPlacement=lean?PlacementWriter.Read(plan):null;
   var cellKey=resolvedPlacement==null?K("Skyrim.esm",0x16DF2):Canonical(resolvedPlacement.ContainerCell);
   var origin=lean?null:vanilla.Cells.SelectMany(b=>b.SubBlocks.SelectMany(s=>s.Cells.Select(c=>new{block=b.BlockNumber,sub=s.BlockNumber,cell=c}))).Single(x=>x.cell.FormKey==cellKey);
@@ -300,7 +302,7 @@ static class Generate {
   // Skyrim/xEdit's Partial Form flag is bit 14; Mutagen 0.49 has no named CELL enum.
   var cell=new Cell(cellKey,SkyrimRelease.SkyrimSE){EditorID=resolvedPlacement?.ContainerOrigin.EditorId??origin?.cell.EditorID,Flags=resolvedPlacement==null?origin!.cell.Flags:resolvedPlacement.Interior?Cell.Flag.IsInteriorCell:0,MajorFlags=(Cell.MajorFlag)(0x4000|(resolvedPlacement is {Interior:false}?0x400:0))};
   var placement=lean?actor.GetProperty("placement"):m.GetProperty("savedPlacement");P3Float Vector(string key){var a=placement.GetProperty(key).EnumerateArray().Select(x=>x.GetSingle()).ToArray();return new P3Float(a[0],a[1],a[2]);}
-  var placed=new PlacedNpc(New(0x801),SkyrimRelease.SkyrimSE){EditorID="AF_SenPlaced",MajorFlags=PlacedNpc.MajorFlag.Persistent,Scale=0.95f,Placement=new Placement{Position=Vector("position"),Rotation=Vector("rotation")}};placed.Base.SetTo(npc.FormKey);cell.Persistent.Add(placed);
+  var placed=new PlacedNpc(New(0x801),SkyrimRelease.SkyrimSE){EditorID=Label("Placed"),MajorFlags=PlacedNpc.MajorFlag.Persistent,Scale=0.95f,Placement=new Placement{Position=Vector("position"),Rotation=Vector("rotation")}};placed.Base.SetTo(npc.FormKey);cell.Persistent.Add(placed);
   if(lean)placed.Scale=actor.GetProperty("scale").GetSingle();
   if(resolvedPlacement is {Interior:false}){var world=new Worldspace(Canonical(resolvedPlacement.Worldspace!),SkyrimRelease.SkyrimSE){EditorID=resolvedPlacement.WorldOrigin!.EditorId,MajorFlags=(Worldspace.MajorFlag)0x4000,TopCell=cell};dst.Worldspaces.Add(world);}
   else{var block=new CellBlock{BlockNumber=resolvedPlacement?.InteriorBlock??origin!.block,GroupType=GroupTypeEnum.InteriorCellBlock};var sub=new CellSubBlock{BlockNumber=resolvedPlacement?.InteriorSubBlock??origin!.sub,GroupType=GroupTypeEnum.InteriorCellSubBlock};sub.Cells.Add(cell);block.SubBlocks.Add(sub);dst.Cells.Add(block);}
@@ -427,7 +429,7 @@ static class Generate {
   foreach(var o in owners)o.Dispose();Console.WriteLine(JsonSerializer.Serialize(new{records=dst.EnumerateMajorRecords().Count(),masters,nextId=next}));
  }
  static string Norm(string s)=>s.Replace('\\','/').ToLowerInvariant().TrimStart('/');
- static HeadPart Copy(HeadPart x,IHeadPartGetter y){x.DeepCopyIn(y);return x;}
+ static HeadPart Copy(HeadPart x,IHeadPartGetter y){x.DeepCopyIn(y);x.Flags&=~HeadPart.Flag.Playable;return x;}
  static TextureSet Copy(TextureSet x,ITextureSetGetter y){x.DeepCopyIn(y);return x;}
  static Armor Copy(Armor x,IArmorGetter y){x.DeepCopyIn(y);return x;}
  static ArmorAddon Copy(ArmorAddon x,IArmorAddonGetter y){x.DeepCopyIn(y);return x;}
