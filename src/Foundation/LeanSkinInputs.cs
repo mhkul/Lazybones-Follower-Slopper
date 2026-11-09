@@ -1,6 +1,6 @@
 namespace AutoFollower;
 
-public sealed record LeanSkin(string OriginalSkin,string[] Addons,string[] Models,string Basis,string RuntimeAssignmentOmission,string[]? ObodyBodyModels=null,string[]? AsIsFootModels=null);
+public sealed record LeanSkin(string OriginalSkin,string[] Addons,string[] Models,string Basis,string RuntimeAssignmentOmission,string[]? ObodyBodyModels=null,string[]? AsIsFootModels=null,SkinMaterial[]? RequestedMaterials=null);
 public static class LeanSkinInputs
 {
     public const string RuntimeAssignmentOmission = "D86: TNG and analogous runtime-assigned components are omitted. Their assignments and appearance are not reproduced; alternate-provider runtime behavior is unverified.";

@@ -114,15 +114,28 @@ public sealed class LeanMo2Sources(string data,string output,LeanReadMetrics met
         if(Path.GetExtension(reference).Equals(".nif",StringComparison.OrdinalIgnoreCase))try{nif=LeanExportInputs.ReadNif(bytes);}catch(InvalidDataException e){throw new InvalidDataException("Required NIF "+reference+" from "+backing+(member==null?"":" :: "+member)+" ("+consumer+"): "+e.Message,e);}
         try{consume?.Invoke(bytes);}catch(InvalidDataException e){throw new InvalidDataException("Read required asset "+reference+" from "+backing+(member==null?"":" :: "+member)+" ("+consumer+"): "+e.Message,e);}
         string digest=BoundedBinary.Digest(bytes);var source=new LeanSource(reference,backing,digest,bytes.Length,consumer,member!=null?"Active BSA exact member":supplied==null?(physical?"Physical/deployed final loose backing":"Selected Data read-only final loose backing"):suppliedKind??"Declared generated export",member,memberOffset,storedBytes,activation,member!=null?archiveBasis:supplied==null?lookupPolicy!.Basis:suppliedBasis??"Explicit selected generated export; independent of installed loose/archive priority",stagePayload,nif?.Dependencies.Select(LeanPackagingChoices.Ref).Distinct().ToArray(),nif?.TextureRepairs);
-        if(stagePayload){string target=SafePaths.Below(output,"assets/"+reference);Directory.CreateDirectory(Path.GetDirectoryName(target)!);using(var dest=new FileStream(target,FileMode.CreateNew,FileAccess.Write,FileShare.None))dest.Write(bytes);metrics.BytesCopied+=bytes.Length;metrics.FilesCopied++;}staged.Add(reference,source);Sources.Add(source);
+        if(stagePayload){string target=SafePaths.Below(output,"assets/"+reference);bool created=false;
+            try{Directory.CreateDirectory(Path.GetDirectoryName(target)!);using var dest=new FileStream(target,FileMode.CreateNew,FileAccess.Write,FileShare.None);created=true;dest.Write(bytes);}
+            catch(Exception e)when(e is IOException or UnauthorizedAccessException){if(created)File.Delete(target);throw new HostProtectionException("Unable to write an owned staged asset safely",e);}
+            metrics.BytesCopied+=bytes.Length;metrics.FilesCopied++;
+        }staged.Add(reference,source);Sources.Add(source);
         if(nif!=null){try{inspectNif?.Invoke(nif);}catch(InvalidDataException e){throw new InvalidDataException("Inspect required NIF "+reference+" from "+backing+(member==null?"":" :: "+member)+" ("+consumer+"): "+e.Message,e);}if(followDependencies)foreach(var dep in nif.Dependencies)pending.Enqueue((dep,"NIF dependency of "+reference));}
         return source;
+    }
+    public HashSet<string> StagingCheckpoint()=>Sources.Select(x=>x.Reference).ToHashSet(StringComparer.OrdinalIgnoreCase);
+    public void RollbackStaging(HashSet<string> checkpoint)
+    {
+        foreach(var source in Sources.Where(x=>!checkpoint.Contains(x.Reference)).ToArray()){
+            if(source.RuntimeAsset){string target=SafePaths.Below(output,"assets/"+source.Reference);SafePaths.NoLinks(target);File.Delete(target);}
+            staged.Remove(source.Reference);Sources.Remove(source);
+        }
     }
     public void Dispose(){foreach(var item in archives)item.Reader.Dispose();}
 }
 
 public sealed record LeanRecord(string Canonical,string Type,string Plugin,string Backing,long Offset,int Bytes,uint Flags,string[] Masters,Dictionary<string,List<byte[]>> Fields,string Sha256,LeanGroup[]? Groups=null)
 {
+    internal byte[]? QuestFields {get;init;}
     public string[] Text(string tag)=>Fields.GetValueOrDefault(tag,[]).Select(x=>Encoding.UTF8.GetString(x).TrimEnd('\0')).ToArray();
     public string? Ref(uint id){if(id==0)return null;int slot=(int)(id>>24);if(slot>Masters.Length)throw new InvalidDataException("Record reference master index invalid");return (slot<Masters.Length?Masters[slot]:Plugin)+"|"+(id&0xffffff).ToString("X6");}
     public string[] Refs(string tag)=>Fields.GetValueOrDefault(tag,[]).SelectMany(x=>{if(x.Length%4!=0)throw new InvalidDataException("Record reference array malformed");return Enumerable.Range(0,x.Length/4).Select(i=>Ref(BitConverter.ToUInt32(x,i*4))).Where(y=>y!=null).Select(y=>y!);}).ToArray();
@@ -135,7 +148,7 @@ public sealed class LeanRecordIndex(LeanMo2Sources sources,CancellationToken tok
     readonly Dictionary<string,Row> winners=new(StringComparer.OrdinalIgnoreCase),origins=new(StringComparer.OrdinalIgnoreCase);
     readonly Dictionary<string,LeanRecord> records=new(StringComparer.OrdinalIgnoreCase);
     // These groups have concrete head/material/equipment record consumers.
-    static readonly HashSet<string> types=["NPC_","RACE","HDPT","ARMO","ARMA","TXST","WEAP","STAT","AMMO","PROJ","CELL","WRLD","FLST","ENCH","MGEF","CLAS","CSTY","PERK","SPEL","VTYP","FACT","SNDR","SNCT","SOPM","KYWD"];
+    static readonly HashSet<string> types=["QUST","NPC_","RACE","HDPT","ARMO","ARMA","TXST","WEAP","STAT","AMMO","PROJ","CELL","WRLD","FLST","ENCH","MGEF","CLAS","CSTY","PERK","SPEL","VTYP","FACT","SNDR","SNCT","SOPM","KYWD"];
     readonly Dictionary<string,byte[]> rawRecords=new(StringComparer.OrdinalIgnoreCase),headers=new(StringComparer.OrdinalIgnoreCase);
     readonly Dictionary<string,(long Bytes,long WriteTime)> pluginIdentity=new(StringComparer.OrdinalIgnoreCase);
     readonly Dictionary<string,string> pluginBackings=new(StringComparer.OrdinalIgnoreCase);
@@ -190,7 +203,7 @@ public sealed class LeanRecordIndex(LeanMo2Sources sources,CancellationToken tok
         using var f=sources.Open(row.Backing);byte[] raw=sources.At(f,row.Offset,row.Size),payload=raw[24..];if((row.Flags&0x40000)!=0)payload=BoundedBinary.Inflate(payload[4..],checked((int)BitConverter.ToUInt32(payload)));
         string digest=BoundedBinary.Digest(raw);
         if((BitConverter.ToUInt32(headers[row.Backing],8)&0x80)!=0){payload=(localized??=new(sources,"english")).Inline(row.Plugin,row.Type,payload);byte[] edited=raw[..24];BitConverter.GetBytes(payload.Length).CopyTo(edited,4);BitConverter.GetBytes(row.Flags&~0x40000u).CopyTo(edited,8);raw=edited.Concat(payload).ToArray();}
-        record=new(canonical,row.Type,row.Plugin,row.Backing,row.Offset,row.Size,row.Flags,row.Masters,Fields(payload),digest,row.Groups);records.Add(cache,record);rawRecords.Add(cache,raw);return record;
+        record=new(canonical,row.Type,row.Plugin,row.Backing,row.Offset,row.Size,row.Flags,row.Masters,Fields(payload),digest,row.Groups){QuestFields=row.Type=="QUST"?payload:null};records.Add(cache,record);rawRecords.Add(cache,raw);return record;
         }catch(InvalidDataException e){throw new InvalidDataException("Read "+row.Type+" record "+canonical+" from "+row.Plugin+" ("+row.Backing+", record offset="+row.Offset+"): "+e.Message,e);}
     }
     string? RowWorld(Row row){var world=row.Groups.SingleOrDefault(g=>g.Type==1);if(world==null)return null;int slot=(int)(world.Label>>24);if(slot>row.Masters.Length)throw new InvalidDataException("WRLD group master index invalid");return (slot<row.Masters.Length?row.Masters[slot]:row.Plugin)+"|"+(world.Label&0xffffff).ToString("X6");}

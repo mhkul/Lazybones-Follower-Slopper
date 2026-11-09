@@ -7,7 +7,7 @@ namespace AutoFollower;
 public sealed record FollowerSettings(string? ModName=null,string? CharacterName=null,double? Scale=null,
     string LevelMode="player-relative",int MinimumLevel=10,int? MaximumLevel=80,double LevelMultiplier=1,
     string ClassId="warrior",string CombatStyleId="melee",string PerkPackageId="none",
-    string SpellPackageId="none",string? VoiceId=null,bool MarriageEligible=false,string RaceMode="private");
+    string SpellPackageId="none",string? VoiceId=null,bool MarriageEligible=false,string RaceMode="private",RequestedSkin? Skin=null);
 public sealed record FollowerRecord(string Reference,string Type,string EditorId);
 public sealed record FollowerOption(string Id,string Label,FollowerRecord[] Records,string? Description=null);
 public sealed record FollowerClass(string Id,string Label,FollowerRecord Record,string CombatStyleId,string PerkPackageId,string SpellPackageId);

@@ -75,6 +75,7 @@ internal sealed class MainForm : Form
     private string _requestPath = "";
     private LeanAssetSelection[]? _previousAssetSelections;
     private string _equipmentScope="";
+    private SkinChoice[] _skinChoices=[];
     private string[] _excludedEquipment=[];
     private readonly Button _equipmentButton=new ReadableButton{Text="Choose items…"};
     private string EquipmentScope(FollowerInputPreview preview)
@@ -107,7 +108,9 @@ internal sealed class MainForm : Form
     }
     private readonly Button[] _buildButtons = new Button[2];
 
-    public MainForm()
+    public MainForm():this(false) {}
+
+    internal MainForm(bool isolatedEvidence)
     {
         Text = "Lazybones Follower Slopper";
         AppBranding.Apply(this);
@@ -123,7 +126,7 @@ internal sealed class MainForm : Form
             _preparationCancel?.Cancel(); _operationCancel?.Cancel(); _appLifetime.Cancel();
             if (_preparing || _operationActive) { e.Cancel = true; _closePending = true; _workDialog?.SetStatus("Cancelling before closing…"); }
         };
-        _setup=InstalledSetup.Discover(out string environment);_mo2=_setup?.Mo2;
+        string environment="Isolated layout fixture";_setup=isolatedEvidence?null:InstalledSetup.Discover(out environment);_mo2=_setup?.Mo2;
         BuildLanding();
         BuildSettings();
         BuildOperationPage();
@@ -132,7 +135,7 @@ internal sealed class MainForm : Form
         _environmentLabel.ForeColor = _setup == null ? DesktopTheme.Error : Color.FromArgb(148, 210, 174);
         if(LeanMo2Sources.HasContext&&_setup==null)((TableLayoutPanel)_environmentLabel.Parent!).RowStyles[2].Height=96;
         _progressTimer.Tick += (_, _) => RefreshProgress();
-        Shown += async (_, _) => await Task.Run(() => { try { WorkingStorage.Sweep(BuildDestinations.DefaultRoot()); } catch (Exception) { /* Optional maintenance never blocks startup. */ } });
+        if(!isolatedEvidence)Shown += async (_, _) => await Task.Run(() => { try { WorkingStorage.Sweep(BuildDestinations.DefaultRoot()); } catch (Exception) { /* Optional maintenance never blocks startup. */ } });
         ShowPage(_landing);
         DesktopTheme.Apply(this);
     }
@@ -373,6 +376,7 @@ internal sealed class MainForm : Form
                 foreach (var copy in _copies) copy.Disclaimer.Checked = false;
             }
             else if (_settings == null || _preview == null) _settings = preview.SavePreview.Context.Defaults;
+            try{_skinChoices=_setup==null?[]:await Task.Run(()=>BuildInputs.SkinCatalog(_setup,preview,token),token);}catch(InvalidDataException){_skinChoices=[];}
             bool hasVoiceOptions = preview.SavePreview.Context.Catalog.Voices.Any(x => x.Sex == preview.SavePreview.SavedState.Actor.Sex);
             if (!hasVoiceOptions) _settings = _settings! with { VoiceId = "" };
             if (_preview == null) _outputs = new(true, available);
@@ -506,12 +510,14 @@ internal sealed class MainForm : Form
         tabLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));tabLayout.RowStyles.Add(new RowStyle(SizeType.Absolute,56));tabLayout.RowStyles.Add(new RowStyle(SizeType.Percent,100));tabLayout.RowStyles.Add(new RowStyle(SizeType.Absolute,52));page.Controls.Add(tabLayout);
         var notices=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=1,RowCount=2};notices.RowStyles.Add(new RowStyle(SizeType.Percent,50));notices.RowStyles.Add(new RowStyle(SizeType.Percent,50));tabLayout.Controls.Add(notices,0,0);
         var columns=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,RowCount=1};columns.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,50));columns.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,50));columns.RowStyles.Add(new RowStyle(SizeType.Absolute,0));columns.Layout+=(_,_)=>{if(columns.RowStyles[0].Height!=columns.ClientSize.Height)columns.RowStyles[0].Height=columns.ClientSize.Height;};tabLayout.Controls.Add(columns,0,1);
-        TableLayoutPanel Column(){var t=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=1,RowCount=advanced?7:6,Padding=new Padding(2)};t.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));for(int i=0;i<(advanced?7:6);i++)t.RowStyles.Add(new RowStyle(SizeType.Absolute,0));t.Layout+=(_,_)=>{float height=Math.Max(0,t.ClientSize.Height-t.Padding.Vertical)/(advanced?7f:6f);foreach(RowStyle row in t.RowStyles)if(Math.Abs(row.Height-height)>0.1f)row.Height=height;};return t;}
-        var left=Column();var right=Column();columns.Controls.Add(left,0,0);columns.Controls.Add(right,1,0);
+        TableLayoutPanel Column(bool outputColumn=false){var t=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=1,RowCount=advanced?8:6,Padding=new Padding(2)};t.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));for(int i=0;i<(advanced?8:6);i++)t.RowStyles.Add(new RowStyle(SizeType.Absolute,0));t.Layout+=(_,_)=>{float height=Math.Max(0,t.ClientSize.Height-t.Padding.Vertical)/(advanced?8f:6f);for(int row=0;row<t.RowStyles.Count;row++){float target=!advanced&&outputColumn?(row==5?Math.Max(height,64):Math.Max(0,(t.ClientSize.Height-t.Padding.Vertical-Math.Max(height,64))/5)):height;if(Math.Abs(t.RowStyles[row].Height-target)>0.1f)t.RowStyles[row].Height=target;}};return t;}
+        var left=Column(true);var right=Column();columns.Controls.Add(left,0,0);columns.Controls.Add(right,1,0);
         void Field(TableLayoutPanel table,int row,string label,Control control,string? help=null){var r=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,RowCount=1,Margin=new Padding(0,2,5,2)};r.RowStyles.Add(new RowStyle(SizeType.Absolute,0));r.Layout+=(_,_)=>{if(r.RowStyles[0].Height!=r.ClientSize.Height)r.RowStyles[0].Height=r.ClientSize.Height;};r.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,100));r.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));var caption=new Label{Text=label,Dock=DockStyle.Fill,TextAlign=ContentAlignment.MiddleLeft};r.Controls.Add(caption,0,0);control.Dock=DockStyle.Fill;control.Margin=new Padding(2,0,2,0);r.Controls.Add(control,1,0);table.Controls.Add(r,0,row);if(help!=null){_tips.SetToolTip(control,help);_tips.SetToolTip(caption,help);control.AccessibleDescription=help;}}
         ComboBox? raceMode = advanced ? Combo([("private", "Generate new custom race"), ("existing", "Use existing race")]) : null;
         if(raceMode!=null){Field(right,6,"Race",raceMode,"Generate a private copy of the captured race, or use its installed race and skeleton. Existing race packages no skeleton and retains that provider. Captured abilities and other independent records may still require their source plugins in either mode.");raceMode.SelectedValueChanged+=(_,_)=>{if(_syncing||_operationActive||_settings==null)return;_settings=_settings with{RaceMode=raceMode.SelectedValue?.ToString()??"private"};_previousAssetSelections=null;_readyPackagePath="";ResetResult();RefreshSettingsControls();};}
-        if(advanced){Field(left,6,"Equipment",_equipmentButton,"Include or leave out whole armor pieces and weapons. All start included; shared inputs stay with their remaining consumers.");_equipmentButton.Click+=async(_,_)=>await ChooseEquipmentAsync();}
+        if(advanced){Field(left,7,"Equipment",_equipmentButton,"Include or leave out whole armor pieces and weapons. All start included; shared inputs stay with their remaining consumers.");_equipmentButton.Click+=async(_,_)=>await ChooseEquipmentAsync();}
+        ComboBox? skinChoice=advanced?Combo([]):null;
+        if(skinChoice!=null){Field(right,7,"Skin",skinChoice,"Choose the follower's body skin when automatic recovery is unavailable. Exported head and tint are preserved.");skinChoice.SelectedValueChanged+=(_,_)=>{if(_syncing||_operationActive||_settings==null)return;string key=skinChoice.SelectedValue?.ToString()??"";var choice=_skinChoices.SingleOrDefault(x=>x.Canonical==key);_settings=_settings with{Skin=choice==null?null:new RequestedSkin(choice.Canonical,choice.Proof)};_previousAssetSelections=null;_readyPackagePath="";ResetResult();};}
         var name = new TextBox();
         var character = new TextBox();
         var scale = Numeric(0.001m, 10m, 3);
@@ -525,12 +531,14 @@ internal sealed class MainForm : Form
         var prebuilt = new ReadableCheckBox { Text = "BodySlide build", AutoSize = true, Checked = true, AccessibleName = "BodySlide build" };
         var obody = new ReadableCheckBox { Text = "OBody NG (as-is)", AutoSize = true, Enabled = false, AccessibleName = "OBody NG (as-is)" };
         var outputHelp = new Label { AutoSize = true, ForeColor = DesktopTheme.Muted };
-        var outputs = new FlowLayoutPanel { Height = 30, WrapContents = false };
+        var outputs = new FlowLayoutPanel { Height = 30, WrapContents = false, FlowDirection=FlowDirection.TopDown };
         _tips.SetToolTip(prebuilt, "Builds affected body and outfit meshes with the saved preset in BodySlide, so the shape works without OBody NG.");
         prebuilt.AccessibleDescription = "Builds affected body and outfit meshes with the saved preset in BodySlide, so the shape works without OBody NG.";
         _tips.SetToolTip(obody, ObodyOutputHelp());
         obody.AccessibleDescription = ObodyOutputHelp();
         outputs.Controls.Add(prebuilt); outputs.Controls.Add(obody);
+        void SizeOutputLabels(){foreach(var option in new[]{prebuilt,obody}){option.AutoSize=false;option.Width=TextRenderer.MeasureText(option.Text,option.Font).Width+26;option.Height=Math.Max(24,TextRenderer.MeasureText(option.Text,option.Font).Height+6);option.Margin=Padding.Empty;}}
+        prebuilt.TextChanged+=(_,_)=>SizeOutputLabels();obody.TextChanged+=(_,_)=>SizeOutputLabels();prebuilt.FontChanged+=(_,_)=>SizeOutputLabels();obody.FontChanged+=(_,_)=>SizeOutputLabels();SizeOutputLabels();
         outputHelp.Dock=DockStyle.Fill;outputHelp.AutoSize=false;outputHelp.AutoEllipsis=true;notices.Controls.Add(outputHelp,0,0);
         notices.Controls.Add(new Label{Text=LeanOverlayPolicy.Warning,Dock=DockStyle.Fill,ForeColor=Color.FromArgb(237,198,139),AutoEllipsis=true},0,1);
         var combat=Combo(FollowerSettingsPolicy.Catalog.CombatStyles.Select(x=>(x.Id,x.Label)).ToArray());
@@ -546,6 +554,7 @@ internal sealed class MainForm : Form
         foreach(Control item in limits.Controls)item.Margin=new Padding(1,0,1,0);
         Field(left,4,"Limits",limits,"Leave Maximum blank for no user-set cap.");
         Field(left,5,"Outputs",outputs,"Select follower versions to include. One selected creates a plain ZIP; both build both versions for an installer choice, and both builds must succeed.");
+        outputs.Parent!.Margin=new Padding(0,0,5,0);if(advanced)left.SetRowSpan(outputs.Parent!,2);
         var classRow=new TableLayoutPanel{ColumnCount=2,RowCount=1};classRow.RowStyles.Add(new RowStyle(SizeType.Absolute,0));classRow.Layout+=(_,_)=>{if(classRow.RowStyles[0].Height!=classRow.ClientSize.Height)classRow.RowStyles[0].Height=classRow.ClientSize.Height;};classRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));classRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,38));klass.Dock=DockStyle.Fill;klass.Margin=Padding.Empty;classRow.Controls.Add(klass,0,0);
         var defaults=new ReadableButton{Text="↺",Dock=DockStyle.Fill,Margin=new Padding(1)};_tips.SetToolTip(defaults,"Use class defaults for combat, perks and spells.");defaults.AccessibleName="Use class defaults";defaults.Click+=(_,_)=>{ReadControls(index);_settings=FollowerSettingsPolicy.SelectClass(_settings??new(),klass.SelectedValue?.ToString()??"warrior");RefreshSettingsControls();};classRow.Controls.Add(defaults,1,0);
         Field(right,0,"Class",classRow,"Changing class applies its mapped combat, perks and spells. Advanced choices override them.");_tips.SetToolTip(klass,"Changing class applies its mapped combat, perks and spells. Advanced choices override them.");
@@ -561,7 +570,7 @@ internal sealed class MainForm : Form
         _buildButtons[index] = build;
         var footer=new TableLayoutPanel{Dock=DockStyle.Fill,ColumnCount=2,RowCount=1,Padding=new Padding(6)};footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,150));footer.Controls.Add(disclaimer,0,0);build.Dock=DockStyle.Fill;footer.Controls.Add(build,1,0);tabLayout.Controls.Add(footer,0,2);
         disclaimer.AccessibleDescription="You are responsible for checking permission to share every selected asset.";
-        var controls = new SettingsControls(page, name, character, scale, min, max, mode, multiplier, klass, voice, marriage, combat, perks, spells, disclaimer, build, advanced, basicMapping, prebuilt, obody, outputs, outputHelp, raceMode);
+        var controls = new SettingsControls(page, name, character, scale, min, max, mode, multiplier, klass, voice, marriage, combat, perks, spells, disclaimer, build, advanced, basicMapping, prebuilt, obody, outputs, outputHelp, raceMode, skinChoice);
         void OutputChanged()
         {
             if (_syncing || _operationActive) return;
@@ -698,6 +707,7 @@ internal sealed class MainForm : Form
             string obodyHelp = ObodyOutputHelp();
             _tips.SetToolTip(c.Obody, obodyHelp);
             c.Obody.AccessibleDescription = obodyHelp;
+            if(c.SkinChoice!=null){var choices=new[]{("", "Captured/default")}.Concat(_skinChoices.Select(x=>(x.Canonical,x.Label))).ToArray();c.SkinChoice.DisplayMember="Label";c.SkinChoice.ValueMember="Id";c.SkinChoice.DataSource=choices.Select(x=>new{Id=x.Item1,Label=x.Item2}).ToArray();c.SkinChoice.SelectedValue=_settings.Skin?.Canonical??"";}
             c.Prebuilt.Checked = _outputs.Prebuilt;
             c.Obody.Enabled = _obodyAvailable && !_operationActive;
             c.Obody.Checked = _outputs.Obody && _obodyAvailable;
@@ -1446,6 +1456,6 @@ internal sealed class MainForm : Form
         return "A supported OBody preset assignment is not confirmed. Refresh the selected inputs before choosing this output.";
     }
 
-    private sealed record SettingsControls(TabPage Tab, TextBox ModName, TextBox CharacterName, NumericUpDown Scale, NumericUpDown Minimum, TextBox Maximum, ComboBox LevelMode, NumericUpDown Multiplier, ComboBox Class, ComboBox Voice, CheckBox Marriage, ComboBox Combat, ComboBox Perks, ComboBox Spells, CheckBox Disclaimer, Button Build, bool Advanced, Label? BasicMapping, CheckBox Prebuilt, CheckBox Obody, Control Outputs, Label OutputHelp, ComboBox? RaceMode);
+    private sealed record SettingsControls(TabPage Tab, TextBox ModName, TextBox CharacterName, NumericUpDown Scale, NumericUpDown Minimum, TextBox Maximum, ComboBox LevelMode, NumericUpDown Multiplier, ComboBox Class, ComboBox Voice, CheckBox Marriage, ComboBox Combat, ComboBox Perks, ComboBox Spells, CheckBox Disclaimer, Button Build, bool Advanced, Label? BasicMapping, CheckBox Prebuilt, CheckBox Obody, Control Outputs, Label OutputHelp, ComboBox? RaceMode, ComboBox? SkinChoice);
 }
 

@@ -271,9 +271,20 @@ static class Generate {
   var presets=defaults.GetProperty("presets").EnumerateArray().Select(v=>v.GetUInt32()).ToArray();npc.FaceParts=new NpcFaceParts{Nose=presets[0],Unknown=presets[1],Eyes=presets[2],Mouth=presets[3]};npc.TextureLighting=lean?CapturedSkinTint.Lighting(j.GetProperty("tintLighting")):Color.FromArgb(unchecked((int)j.GetProperty("tintInfo")[0].GetProperty("color").GetUInt32()));
   if(lean)notes.Add("Body texture-lighting RGB includes captured skin-tint opacity at native byte precision. Authored tint-layer RGB/opacity and composed FaceTint are preserved; runtime colour match remains unverified.");
   if(lean&&capturedSkinAsset!=null){npc.TintLayers.Add(CapturedSkinTint.Resolve((IRaceGetter)Source(selectedRace),female,j.GetProperty("tintLighting")));notes.Add("Follower-owned captured custom skin RGB/opacity binds to the selected race skin-tone asset in both race modes; private race retains that selected-sex asset. No palette substitution or shared RACE override. NPC opacity uses native whole-percent precision; runtime colour match remains unverified.");}
+  FormKey SkinAddon(FormKey key){
+   var original=Clone(key);
+   if(!plan.GetProperty("skin").TryGetProperty("requestedMaterials",out var requested)||requested.ValueKind!=JsonValueKind.Array)return original;
+   var matches=requested.EnumerateArray().Where(x=>Canonical(x.GetProperty("addon").GetString()!)==key).ToArray();
+   if(matches.Length==0)return original;if(matches.Length!=1)throw new InvalidDataException("Conflicting requested skin material");
+   if(next>0xFFF)throw new InvalidDataException("Private skin ESL ID overflow");
+   var copy=new ArmorAddon(New(next++),SkyrimRelease.SkyrimSE);copy.DeepCopyIn((IArmorAddonGetter)used[key]);copy.EditorID=Label("SkinPart",null,copy.FormKey.ID);
+   var texture=Clone(Canonical(matches[0].GetProperty("textureSet").GetString()!));
+   copy.SkinTexture=new GenderedItem<IFormLinkNullableGetter<ITextureSetGetter>>(new FormLinkNullable<ITextureSetGetter>(female?FormKey.Null:texture),new FormLinkNullable<ITextureSetGetter>(female?texture:FormKey.Null));copy.TextureSwapList=null;dst.ArmorAddons.Add(copy);
+   notes.Add("Explicit requested body skin material applied to captured addon: "+key);return copy.FormKey;
+  }
   string skinName=followerName+" private skin";
   var skin=new Armor(New(0x803),SkyrimRelease.SkyrimSE){EditorID=Label("Skin"),Name=skinName,BodyTemplate=new BodyTemplate{FirstPersonFlags=(BipedObjectFlag)0x8C},Race=new FormLinkNullable<IRaceGetter>(race.FormKey)};
-  if(lean){var input=plan.GetProperty("skin");skin.DeepCopyIn((IArmorGetter)Source(Canonical(input.GetProperty("originalSkin").GetString()!)));skin.EditorID=Label("Skin");skin.Name=skinName;skin.Race.SetTo(race.FormKey);skin.Armature.Clear();foreach(var addon in input.GetProperty("addons").EnumerateArray())skin.Armature.Add(new FormLink<IArmorAddonGetter>(Clone(Canonical(addon.GetString()!))));notes.Add("Lean ordinary skin and applicable addons copied from selected record winners, retaining source flags. "+input.GetProperty("runtimeAssignmentOmission").GetString());}
+  if(lean){var input=plan.GetProperty("skin");skin.DeepCopyIn((IArmorGetter)Source(Canonical(input.GetProperty("originalSkin").GetString()!)));skin.EditorID=Label("Skin");skin.Name=skinName;skin.Race.SetTo(race.FormKey);skin.Armature.Clear();foreach(var addon in input.GetProperty("addons").EnumerateArray())skin.Armature.Add(new FormLink<IArmorAddonGetter>(SkinAddon(Canonical(addon.GetString()!))));notes.Add("Lean ordinary skin and applicable addons copied from selected record winners, retaining source flags. "+input.GetProperty("runtimeAssignmentOmission").GetString());}
   else{foreach(var id in new uint[]{0x19386,0x1938C,0x1938D}) {
    var fk=Clone(K("Skyrim.esm",id));var aa=(ArmorAddon)used[K("Skyrim.esm",id)];
    // Winning model shaders carry the captured female skin materials. Vanilla TXST would override them.

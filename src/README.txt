@@ -1,4 +1,4 @@
-Lazybones Follower Slopper 0.1.8 — Windows x64
+Lazybones Follower Slopper 0.1.9 — Windows x64
 
 Create a follower install ZIP from a Skyrim save and matching RaceMenu head
 export. Extract outside game, mod and input folders. Open the EXE directly
@@ -90,12 +90,12 @@ lease proof. Unknown legacy caches and .NET bootstrap extraction are retained.
 
 GPLv3, no warranty. Full terms/notices and asset-sharing responsibility:
 src/LICENSES.txt. Check asset permissions before distributing a follower.
-Keep matching Lazybones-Follower-Slopper-0.1.8-thirdparty-source.zip available
+Keep matching Lazybones-Follower-Slopper-0.1.9-thirdparty-source.zip available
 with the application and its source when redistributing. It contains exact
 dependency sources and correspondence indexes. Matching release files:
-https://github.com/mhkul/Lazybones-Follower-Slopper/releases/tag/v0.1.8
+https://github.com/mhkul/Lazybones-Follower-Slopper/releases/tag/v0.1.9
 Issue-reporting guide:
-https://github.com/mhkul/Lazybones-Follower-Slopper/blob/v0.1.8/docs/REPORTING_ISSUES.md
+https://github.com/mhkul/Lazybones-Follower-Slopper/blob/v0.1.9/docs/REPORTING_ISSUES.md
 
 References: https://www.gnu.org/licenses/gpl-3.0.html
 https://john95ac.github.io/website-documents-John95AC/OBody_NG_Preset_Distribution_Assistant_NG/index.html
@@ -134,3 +134,10 @@ be proved. Captured base assets are kept; review output warnings and instruction
 Empty or no-effect RaceMenu armor material records no longer block Continue.
 Unsupported saved armor/body material effects allow builds to continue with
 explicit appearance warnings; captured base appearance is retained.
+
+Advanced Skin: Captured/default preserves the normal captured skin. Installed RSV choices explicitly select the generated follower body, hands and feet skin; they do not detect the skin previously applied in game. The exported head and tint remain authoritative, so head/body textures can differ. If a selected skin changes or is unavailable, the build retains captured/default assets and reports a warning.
+
+Advanced Skin offers explicit installed-RSV body, hands and feet material choices.
+Captured/default remains the default and is retained with a warning if a chosen
+skin becomes unavailable. Exported head/tint remain authoritative; a visible
+head/body texture difference is possible. Both output checkbox labels are readable.

@@ -231,6 +231,9 @@ public static class LeanExportBuilder
             var privateSoundRecords=LeanWeaponSounds.Resolve(equipment.Where(e=>e.Type is "WEAP" or "AMMO").Select(e=>index.Get(e.Canonical)),key=>index.Get(key),pending);
             Write("weapon-sound-inputs.json",new{Records=privateSoundRecords,Basis="Selected weapon-called mod sound descriptors, category/output closure and exact audio winners; no behavior substitution"});
             LeanSkin? skin=null;try{skin=LeanSkinInputs.Resolve(key=>index.Get(key),saved.Actor,races,pending);}catch(InvalidDataException e){gaps.Add(new("effective body skin",e.Message,"Resolve the named ordinary selected skin/addon/model from active record winners; no invented skin or historical capture substitution"));}
+            if(skin!=null&&selectedSettings?.Skin!=null){
+                skin=LeanRequestedSkin.Prepare(selectedSettings.Skin,saved.Actor,skin,races,index,sources,qualityWarnings);
+            }
             if(skin!=null)foreach(string addon in skin.Addons){var ar=index.Get(addon);foreach(string key in ar.Refs(saved.Actor.Sex==1?"NAM1":"NAM0").Concat(ar.Refs(saved.Actor.Sex==1?"NAM3":"NAM2")))Material(key);var model=LeanModelInputs.Biped(ar,saved.Actor.Sex,false);Alternate(ar,model.Basis.Contains("fallback")?"MO2S":saved.Actor.Sex==1?"MO3S":"MO2S");}
             var overlayNotice=LeanOverlayPolicy.Describe(cosave.Skee);
             var bindings=materials.Bindings;

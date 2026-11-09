@@ -14,6 +14,12 @@ internal static class BuildInputs
     internal static void Preflight()=>ApplicationTools.Resolve().Require();
 
     internal static LeanEquipmentChoice[] EquipmentCatalog(InstalledSetup setup,FollowerInputPreview preview,CancellationToken token)
+    => Catalog(setup,preview,token,(actor,index)=>LeanEquipmentChoices.Catalog(actor,index));
+
+    internal static SkinChoice[] SkinCatalog(InstalledSetup setup,FollowerInputPreview preview,CancellationToken token)
+        => Catalog(setup,preview,token,(actor,index)=>LeanRequestedSkin.Catalog(actor,index));
+
+    static T[] Catalog<T>(InstalledSetup setup,FollowerInputPreview preview,CancellationToken token,Func<LeanActor,LeanRecordIndex,T[]> catalog)
     {
         setup.Revalidate();
         using var sources=new LeanMo2Sources(Path.Combine(setup.Game,"Data"),Path.Combine(Path.GetTempPath(),"unused-"+Guid.NewGuid()),new(),token);
@@ -29,7 +35,7 @@ internal static class BuildInputs
             sources.ConfigureArchives(order,archives,File.Exists(Path.Combine(mo2.ProfileDirectory,"archives.txt"))?Lines("archives.txt"):[],LeanLookupPolicy.Evaluate("metadata preview","metadata preview",LeanMo2Sources.EffectiveInvalidation(query),query));
         }
         var index=new LeanRecordIndex(sources,token);index.SetLanguage(ActiveMo2.ParseIni(File.ReadAllText(query)).GetValueOrDefault("General/sLanguage")??"english");index.Scan(order);
-        var choices=LeanEquipmentChoices.Catalog(preview.SavePreview.SavedState.Actor,index);token.ThrowIfCancellationRequested();setup.Revalidate();return choices;
+        var choices=catalog(preview.SavePreview.SavedState.Actor,index);token.ThrowIfCancellationRequested();setup.Revalidate();return choices;
     }
 
     internal static PresetInput[] ResolvePresets(InstalledSetup setup, FollowerInputPreview preview, CancellationToken token)
