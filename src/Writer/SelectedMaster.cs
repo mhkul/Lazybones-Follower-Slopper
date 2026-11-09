@@ -15,9 +15,10 @@ static class SelectedMaster
             visiting.Remove(name);visited.Add(name);ordered.Add(Path.GetFileName(path));
         }
         var selectedOrder=inputs.GetProperty("masterPaths").EnumerateObject().Select((p,i)=>(p.Name,Index:i)).ToDictionary(p=>p.Name,p=>p.Index,StringComparer.OrdinalIgnoreCase);
-        foreach(string name in required.Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(n=>selectedOrder.GetValueOrDefault(n,int.MaxValue)))Visit(name);
+        var direct=required.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach(string name in direct.OrderBy(n=>selectedOrder.GetValueOrDefault(n,int.MaxValue)))Visit(name);
         // DFS proves the necessary closure/cycles; selected order decides override winners.
-        return ordered.OrderBy(n=>selectedOrder.GetValueOrDefault(n,int.MaxValue)).ToArray();
+        return ordered.Where(direct.Contains).OrderBy(n=>selectedOrder.GetValueOrDefault(n,int.MaxValue)).ToArray();
     }
     static JsonElement Named(JsonElement values,string name,string context)
     {

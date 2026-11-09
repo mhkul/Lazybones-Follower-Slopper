@@ -1,4 +1,4 @@
-# Lazybones Follower Slopper 0.1.10: agent guide
+# Lazybones Follower Slopper 0.1.11: agent guide
 
 The Windows x64 application builds a follower ZIP from a selected Skyrim save
 and matching finished RaceMenu export. Operate its WinForms GUI. There is no
@@ -227,7 +227,7 @@ not public source. Editable code is in Gui/Foundation/Writer, Python stages
 in Stages, packagers in tools, and portrait/ICO in `assets/branding/icon-v2`.
 
 Keep `src/LICENSES.txt` and matching dependency-source access when redistributing.
-`Lazybones-Follower-Slopper-0.1.10-thirdparty-source.zip` contains dependency
+`Lazybones-Follower-Slopper-0.1.11-thirdparty-source.zip` contains dependency
 sources, full notices and binary/revision correspondence indexes. Published
 upstream binaries were not independently rebuilt; their own prerequisites
 apply. Mutagen upstream PreBuild deletes cache folders: use an isolated
@@ -235,7 +235,7 @@ upstream profile/cache. This guide adds no public release-packaging command
 or unattended follower-build interface.
 
 The Python native component metadata is in
-dependencies/python-native-components.json. The matching v0.1.10 thirdparty-source
+dependencies/python-native-components.json. The matching v0.1.11 thirdparty-source
 ZIP includes ctypes/libffi source, updated binary/component indexes and full
 notices alongside the existing dependency sources. Preserve that complete
 companion when redistributing application binaries.
@@ -287,3 +287,9 @@ Generated humanoid races inherit ordinary armor compatibility. Copied wearable
 armor keeps ordinary humanoid wearer support; private skin remains separate.
 Authored beast/exceptional compatibility and existing-race output are preserved.
 Compatibility does not guarantee arbitrary custom mesh or headgear fit.
+
+Generated plugins omit unnecessary masters and unused private-race selectable tint
+presets while preserving captured coloring. If a custom ground-model texture set
+is missing from captured evidence, optional inventory preview/dropped presentation
+may be omitted with a warning; equipped models and explicit retention are preserved.
+This fallback does not repair the missing capture evidence.

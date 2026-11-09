@@ -83,6 +83,14 @@ static class Generate {
    rec=full.EnumerateMajorRecords().FirstOrDefault(r=>r.FormKey==key)??throw new Exception("Supporting source record absent "+key);
    sources[key]=rec;notes.Add("Extended source-local dependency: "+key+" from "+path);return rec;
   }
+  var retainedAssets=lean?m.GetProperty("assets").EnumerateArray().Where(a=>a.TryGetProperty("mode",out var mode)&&mode.GetString()=="Retain dependency").Select(a=>a.GetProperty("assetReference").GetString()!).ToArray():[];
+  bool OmitGround(IModelGetter? model,FormKey armor) {
+   if(!lean||model==null||model.File.IsNull||GroundModelPolicy.Retained(model.File.GivenPath,retainedAssets))return false;
+   var unavailable=GroundModelPolicy.Unavailable(model, k=>sources.TryGetValue(k,out var record)&&record is ITextureSetGetter);
+   if(unavailable.Length==0)return false;
+   buildWarnings.Add(BestEffortBuild.Finding("ground-model",$"{armor}: {model.File.GivenPath}; unavailable alternate texture sets: {string.Join(',',unavailable)}","asset-quality","An inventory or dropped-item model was omitted because its alternate texture could not be packaged. Equipped appearance is retained; the item may lack a ground or inventory model."));
+   return true;
+  }
   var sourceRace=(IRaceGetter)Source(selectedRace);
   var armorPolicy=lean&&!existingRace?RaceEquipmentPolicy.Choose(selectedRace,sourceRace.ArmorRace.FormKey,sourceRace.MorphRace.FormKey):null;
   if(armorPolicy?.Warning is {} armorWarning)buildWarnings.Add(BestEffortBuild.Finding("armor-race",armorWarning,"plugin-quality",armorWarning));
@@ -154,9 +162,9 @@ static class Generate {
      }
      dst.TextureSets.Add(t);break;
     case Armor a:
-     // Both called ground models are required extraction inputs, never external notes.
+     // Retain callable ground models unless an unavailable alternate texture requires a warned omission.
      if(a.WorldModel!=null) {
-      foreach(var model in new[]{a.WorldModel.Male,a.WorldModel.Female})if(model?.Model!=null)model.Model=ModelCopy(model.Model);
+      foreach(var model in new[]{a.WorldModel.Male,a.WorldModel.Female})if(model?.Model!=null)model.Model=OmitGround(model.Model,key)?null:ModelCopy(model.Model);
      }
      if(!a.ObjectEffect.IsNull&&a.ObjectEffect.FormKey.ModKey!=ModKey.FromFileName("Skyrim.esm"))Clone(a.ObjectEffect.FormKey);
      if(a.Armature!=null)foreach(var arm in a.Armature.ToArray()) {
@@ -234,6 +242,7 @@ static class Generate {
   var race=new Race(New(0x802),SkyrimRelease.SkyrimSE);race.DeepCopyIn((IRaceGetter)Source(selectedRace));race.EditorID=Label("Race");race.IsCompressed=false;
   if(lean&&!race.Flags.HasFlag(Race.Flag.Playable))throw new Exception("Selected winning race is not playable: "+selectedRace);
   if(!existingRace)foreach(var ability in privateRaceRecords.OrderBy(x=>x.ID))Clone(ability);
+  if(lean&&!existingRace)race.Flags &= ~Race.Flag.Playable;
   if(!existingRace){race.Skin.SetTo(New(0x803));if(!lean&&race.ArmorRace.IsNull)race.ArmorRace.SetTo(selectedRace);if(!lean&&race.MorphRace.IsNull)race.MorphRace.SetTo(selectedRace);}
   var skeletal=female?race.SkeletalModel?.Female:race.SkeletalModel?.Male;
   if(skeletal==null||skeletal.File.IsNull)throw new Exception("Selected-sex skeleton unavailable: "+selectedRace);
@@ -247,9 +256,10 @@ static class Generate {
   foreach(var hd in new[]{race.HeadData?.Male,race.HeadData?.Female})if(hd!=null) {
    bool selectedHead=ReferenceEquals(hd,female?race.HeadData?.Female:race.HeadData?.Male);
    hd.HeadParts.Clear();hd.RacePresets.Clear();hd.AvailableHairColors.Clear();hd.FaceDetails.Clear();hd.AvailableMorphs=null;hd.TintMasks.Clear();
-   if(!existingRace&&selectedHead&&capturedSkinAsset!=null){capturedSkinAsset.FileName=ResolveAsset(capturedSkinAsset.FileName!.GivenPath,"textures");hd.TintMasks.Add(capturedSkinAsset);}
+   if(!existingRace&&selectedHead&&capturedSkinAsset!=null){capturedSkinAsset.FileName=ResolveAsset(capturedSkinAsset.FileName!.GivenPath,"textures");capturedSkinAsset.Presets.Clear();hd.TintMasks.Add(capturedSkinAsset);}
    hd.Model=null;hd.DefaultFaceTexture.SetTo(New(0x807));
   }
+  if(lean&&!existingRace&&capturedSkinAsset!=null)notes.Add("Unused private-race character-creation skin preset choices omitted; captured custom tint and default preset remain.");
   notes.Add(existingRace?"Captured existing race is referenced without a RACE override; its installed skeleton provider is required.":"Private race preserves selected winning behavior/attacks/keywords and MorphRace; armor compatibility uses the selected human or species-specific policy. Unused generation choices are omitted for the fixed NPC.");
   var j=lean?plan.GetProperty("appearance"):JsonDocument.Parse(File.ReadAllText(m.GetProperty("faceGen").GetProperty("sourceProvenance").GetProperty("appearancePreset").GetProperty("path").GetString()!)).RootElement;
   if(lean){foreach(var h in actor.GetProperty("headParts").EnumerateArray())Clone(Canonical(h.GetString()!));foreach(var h in j.GetProperty("headParts").EnumerateArray()){string head=actor.GetProperty("headParts")[h.GetProperty("savedIndex").GetInt32()].GetString()!;if(!head.Equals(h.GetProperty("canonical").GetString(),StringComparison.OrdinalIgnoreCase))throw new Exception("Validated head identity differs from saved mapping");npc.HeadParts.Add(new FormLink<IHeadPartGetter>(map[Canonical(head)]));}npc.Weight=j.GetProperty("weight").GetSingle();npc.Name=actor.GetProperty("name").GetString();}

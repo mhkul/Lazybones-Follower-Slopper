@@ -132,14 +132,15 @@ static class Validate {
     string sourceTexture=AssetKey(asset.FileName!.GivenPath,"textures");
     var tintAssets=manifestPath==null?[]:JsonDocument.Parse(File.ReadAllText(manifestPath)).RootElement.GetProperty("assets").EnumerateArray().Where(a=>AssetKey(a.GetProperty("assetReference").GetString()!,"textures")==sourceTexture).ToArray();
     Check(tintAssets.Length==1||warnedMissing.Contains(sourceTexture),"Private-race skin-tone texture provider unavailable");
+    asset.Presets.Clear();
     if(tintAssets.Length==1)asset.FileName=tintAssets[0].GetProperty("destination").GetString()![9..].Replace('/','\\');
     Check(masks!=null&&masks.Count==1&&masks[0].Equals(asset),"Private-race selected-sex skin-tone asset was lost or altered");
    }
-   Check(original.Flags==race.Flags&&original.BodyTemplate?.FirstPersonFlags==race.BodyTemplate?.FirstPersonFlags&&original.BodyPartData.FormKey==race.BodyPartData.FormKey,"Selected winning race anatomy/flags were replaced");
+   Check((existingRace?original.Flags:original.Flags & ~Race.Flag.Playable)==race.Flags&&original.BodyTemplate?.FirstPersonFlags==race.BodyTemplate?.FirstPersonFlags&&original.BodyPartData.FormKey==race.BodyPartData.FormKey,"Selected winning race anatomy/flags were replaced");
    FormKey Remap(FormKey key)=>!existingRace&&key==selectedRace?outputRace:key;
    var expectedArmor=existingRace?original.ArmorRace.FormKey:RaceEquipmentPolicy.Choose(selectedRace,original.ArmorRace.FormKey,original.MorphRace.FormKey).Parent;
    Check(armorRace==expectedArmor&&race.MorphRace.FormKey==Remap(original.MorphRace.FormKey),"ArmorRace compatibility or winning MorphRace differs");
-   Check(race.Flags.HasFlag(Race.Flag.Playable),"Selected race is not playable");
+   Check(existingRace?race.Flags.HasFlag(Race.Flag.Playable):!race.Flags.HasFlag(Race.Flag.Playable),"Race playable flag differs from selected output mode");
    compatibleRaces.Clear();var key=selectedRace;
    while(!key.IsNull){Check(compatibleRaces.Add(Remap(key)),"Captured ArmorRace cycle");Check(raceInputs.TryGetValue(key,out var input),"Captured ArmorRace input missing "+key);key=input!.ArmorRace.FormKey;}
   }
