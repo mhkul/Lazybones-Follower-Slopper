@@ -1,4 +1,4 @@
-Lazybones Follower Slopper 0.1.9 — Windows x64
+Lazybones Follower Slopper 0.1.10 — Windows x64
 
 Create a follower install ZIP from a Skyrim save and matching RaceMenu head
 export. Extract outside game, mod and input folders. Open the EXE directly
@@ -90,12 +90,12 @@ lease proof. Unknown legacy caches and .NET bootstrap extraction are retained.
 
 GPLv3, no warranty. Full terms/notices and asset-sharing responsibility:
 src/LICENSES.txt. Check asset permissions before distributing a follower.
-Keep matching Lazybones-Follower-Slopper-0.1.9-thirdparty-source.zip available
+Keep matching Lazybones-Follower-Slopper-0.1.10-thirdparty-source.zip available
 with the application and its source when redistributing. It contains exact
 dependency sources and correspondence indexes. Matching release files:
-https://github.com/mhkul/Lazybones-Follower-Slopper/releases/tag/v0.1.9
+https://github.com/mhkul/Lazybones-Follower-Slopper/releases/tag/v0.1.10
 Issue-reporting guide:
-https://github.com/mhkul/Lazybones-Follower-Slopper/blob/v0.1.9/docs/REPORTING_ISSUES.md
+https://github.com/mhkul/Lazybones-Follower-Slopper/blob/v0.1.10/docs/REPORTING_ISSUES.md
 
 References: https://www.gnu.org/licenses/gpl-3.0.html
 https://john95ac.github.io/website-documents-John95AC/OBody_NG_Preset_Distribution_Assistant_NG/index.html
@@ -141,3 +141,8 @@ Advanced Skin offers explicit installed-RSV body, hands and feet material choice
 Captured/default remains the default and is retained with a warning if a chosen
 skin becomes unavailable. Exported head/tint remain authoritative; a visible
 head/body texture difference is possible. Both output checkbox labels are readable.
+
+Generated humanoid races inherit ordinary armor compatibility. Copied wearable
+armor keeps ordinary humanoid wearer support; private skin remains separate.
+Authored beast/exceptional compatibility and existing-race output are preserved.
+Compatibility does not guarantee arbitrary custom mesh or headgear fit.

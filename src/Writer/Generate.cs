@@ -83,6 +83,9 @@ static class Generate {
    rec=full.EnumerateMajorRecords().FirstOrDefault(r=>r.FormKey==key)??throw new Exception("Supporting source record absent "+key);
    sources[key]=rec;notes.Add("Extended source-local dependency: "+key+" from "+path);return rec;
   }
+  var sourceRace=(IRaceGetter)Source(selectedRace);
+  var armorPolicy=lean&&!existingRace?RaceEquipmentPolicy.Choose(selectedRace,sourceRace.ArmorRace.FormKey,sourceRace.MorphRace.FormKey):null;
+  if(armorPolicy?.Warning is {} armorWarning)buildWarnings.Add(BestEffortBuild.Finding("armor-race",armorWarning,"plugin-quality",armorWarning));
   FormKey Clone(FormKey key) {
    if(key.IsNull||key.ID==0)return FormKey.Null;
    if(map.TryGetValue(key,out var done))return done;
@@ -180,8 +183,8 @@ static class Generate {
      // testing ARMA RNAM/MODL. Direct private-race membership alone is insufficient.
      if(!lean){aa.Race.SetTo(selectedRace);aa.AdditionalRaces.Clear();}
      if(!aa.AdditionalRaces.Any(r=>r.FormKey==outputRace)&&aa.Race.FormKey!=outputRace)aa.AdditionalRaces.Add(new FormLink<IRaceGetter>(outputRace));
-     var sourceArmorRace=((IRaceGetter)Source(selectedRace)).ArmorRace.FormKey;
-     var effectiveArmorRace=sourceArmorRace.IsNull||sourceArmorRace==selectedRace?outputRace:sourceArmorRace;
+     var sourceArmorRace=sourceRace.ArmorRace.FormKey;
+     var effectiveArmorRace=armorPolicy?.Parent??(sourceArmorRace.IsNull||sourceArmorRace==selectedRace?outputRace:sourceArmorRace);
      if(aa.Race.FormKey!=effectiveArmorRace&&!aa.AdditionalRaces.Any(r=>r.FormKey==effectiveArmorRace))aa.AdditionalRaces.Add(new FormLink<IRaceGetter>(effectiveArmorRace));
      if(aa.SkinTexture!=null) {
       if(female){if(!aa.SkinTexture.Female.IsNull)Clone(aa.SkinTexture.Female.FormKey);aa.SkinTexture.Male=new FormLinkNullable<ITextureSetGetter>();}
@@ -247,7 +250,7 @@ static class Generate {
    if(!existingRace&&selectedHead&&capturedSkinAsset!=null){capturedSkinAsset.FileName=ResolveAsset(capturedSkinAsset.FileName!.GivenPath,"textures");hd.TintMasks.Add(capturedSkinAsset);}
    hd.Model=null;hd.DefaultFaceTexture.SetTo(New(0x807));
   }
-  notes.Add(existingRace?"Captured existing race is referenced without a RACE override; its installed skeleton provider is required.":"Private race preserves selected winning behavior/attacks/keywords and ArmorRace/MorphRace semantics, remapping source-race links to the private race. Null compatibility fields remain null. Unused generation choices are omitted for the fixed NPC.");
+  notes.Add(existingRace?"Captured existing race is referenced without a RACE override; its installed skeleton provider is required.":"Private race preserves selected winning behavior/attacks/keywords and MorphRace; armor compatibility uses the selected human or species-specific policy. Unused generation choices are omitted for the fixed NPC.");
   var j=lean?plan.GetProperty("appearance"):JsonDocument.Parse(File.ReadAllText(m.GetProperty("faceGen").GetProperty("sourceProvenance").GetProperty("appearancePreset").GetProperty("path").GetString()!)).RootElement;
   if(lean){foreach(var h in actor.GetProperty("headParts").EnumerateArray())Clone(Canonical(h.GetString()!));foreach(var h in j.GetProperty("headParts").EnumerateArray()){string head=actor.GetProperty("headParts")[h.GetProperty("savedIndex").GetInt32()].GetString()!;if(!head.Equals(h.GetProperty("canonical").GetString(),StringComparison.OrdinalIgnoreCase))throw new Exception("Validated head identity differs from saved mapping");npc.HeadParts.Add(new FormLink<IHeadPartGetter>(map[Canonical(head)]));}npc.Weight=j.GetProperty("weight").GetSingle();npc.Name=actor.GetProperty("name").GetString();}
   else{foreach(var h in m.GetProperty("actor").GetProperty("headParts").EnumerateArray())Clone(K(h.GetProperty("plugin").GetString()!,h.GetProperty("localId").GetUInt32()));
@@ -326,10 +329,19 @@ static class Generate {
   foreach(var link in dst.EnumerateMajorRecords().SelectMany(r=>r.EnumerateFormLinks()).Select(l=>l.FormKey).Distinct().ToArray())
    if(!map.ContainsKey(link)&&sources.TryGetValue(link,out var source)&&source is ITextureSetGetter)Clone(link);
   dst.RemapLinks(map);
+  if(armorPolicy!=null){
+   // Apply after source-to-private remapping so the actual external race IDs
+   // survive, including when the source itself is a vanilla beast race.
+   // Every other copied ARMO is packaged equipment; do not rely on how the
+   // outfit or inventory references it. A skin-shared addon remains wearable.
+   var wearableAddons=dst.Armors.Where(a=>a.FormKey!=skin.FormKey).SelectMany(a=>a.Armature).Select(a=>a.FormKey).ToHashSet();
+   RaceEquipmentPolicy.Apply(race,armorPolicy,dst.ArmorAddons.Select(a=>(a,wearableAddons.Contains(a.FormKey))));
+   RaceEquipmentPolicy.ApplyArmors(armorPolicy,outputRace,skin.FormKey,dst.Armors);
+  }
   if(lean)foreach(var key in privateSoundRecords)if(dst.EnumerateMajorRecords().SelectMany(r=>r.EnumerateFormLinks()).Any(l=>l.FormKey==key))throw new Exception("Private weapon sound closure left original sound link: "+key);
   if(!existingRace&&lean&&privateRaceRecords.Count>0){
-   if(dst.EnumerateMajorRecords().SelectMany(r=>r.EnumerateFormLinks()).Any(l=>l.FormKey.ModKey==selectedRace.ModKey))throw new Exception("Private race still links its source plugin after ability closure: "+selectedRace.ModKey);
-   notes.Add("Captured race abilities and source-local effects copied privately from selected winners; original behavior/conditions/art links preserved. Original race plugin dependency removed by remapped record closure.");
+   if(dst.EnumerateMajorRecords().Any(r=>r.EnumerateFormLinks().Any(l=>l.FormKey.ModKey==selectedRace.ModKey&&!(armorPolicy!=null&&RaceEquipmentPolicy.AllowsParentLink(r,l.FormKey,armorPolicy.Parent,skin.FormKey)))))throw new Exception("Private race still links its source plugin after ability closure: "+selectedRace.ModKey);
+   notes.Add("Captured race abilities and source-local effects copied privately from selected winners; original behavior/conditions/art links preserved. Explicit exceptional armor parents remain dependencies where required.");
   }
   if(lean) {
    // All fixed local records keep their existing allocation and links.

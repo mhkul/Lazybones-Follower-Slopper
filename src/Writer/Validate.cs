@@ -95,8 +95,8 @@ static class Validate {
   else race=mod.Races.Single();
   if(!existingRace&&planPath!=null&&planData.TryGetProperty("privateRaceRecords",out var privateInputs)&&privateInputs.GetArrayLength()>0){
    string original=planData.GetProperty("savedActor").GetProperty("race").GetString()!.Split('|')[0];
-   Check(!mod.ModHeader.MasterReferences.Any(m=>m.Master.FileName.String.Equals(original,StringComparison.OrdinalIgnoreCase)),"Copied private race abilities still require original race plugin");
-   Check(!records.Values.SelectMany(r=>r.EnumerateFormLinks()).Any(l=>l.FormKey.ModKey.FileName.String.Equals(original,StringComparison.OrdinalIgnoreCase)),"Private ability closure left original race links");
+   var parent=race.ArmorRace.FormKey;
+   Check(!records.Values.Any(r=>r.EnumerateFormLinks().Any(l=>l.FormKey.ModKey.FileName.String.Equals(original,StringComparison.OrdinalIgnoreCase)&&!RaceEquipmentPolicy.AllowsParentLink(r,l.FormKey,parent,new FormKey(mod.ModKey,0x803)))),"Private ability closure left unrelated original race links");
    foreach(var ability in race.ActorEffect??[])Check(ability.FormKey.ModKey!=ModKey.FromFileName(original),"Private race ability not remapped");
   }
   FormKey outputRace=npc.Race.FormKey;var outfit=mod.Outfits.Single();var cell=mod.Cells.SelectMany(b=>b.SubBlocks).SelectMany(b=>b.Cells).Concat(mod.Worldspaces.Where(w=>w.TopCell!=null).Select(w=>w.TopCell!)).Single();var actor=cell.Persistent.OfType<IPlacedNpcGetter>().Single();
@@ -137,7 +137,8 @@ static class Validate {
    }
    Check(original.Flags==race.Flags&&original.BodyTemplate?.FirstPersonFlags==race.BodyTemplate?.FirstPersonFlags&&original.BodyPartData.FormKey==race.BodyPartData.FormKey,"Selected winning race anatomy/flags were replaced");
    FormKey Remap(FormKey key)=>!existingRace&&key==selectedRace?outputRace:key;
-   Check(armorRace==Remap(original.ArmorRace.FormKey)&&race.MorphRace.FormKey==Remap(original.MorphRace.FormKey),"Winning ArmorRace/MorphRace were replaced");
+   var expectedArmor=existingRace?original.ArmorRace.FormKey:RaceEquipmentPolicy.Choose(selectedRace,original.ArmorRace.FormKey,original.MorphRace.FormKey).Parent;
+   Check(armorRace==expectedArmor&&race.MorphRace.FormKey==Remap(original.MorphRace.FormKey),"ArmorRace compatibility or winning MorphRace differs");
    Check(race.Flags.HasFlag(Race.Flag.Playable),"Selected race is not playable");
    compatibleRaces.Clear();var key=selectedRace;
    while(!key.IsNull){Check(compatibleRaces.Add(Remap(key)),"Captured ArmorRace cycle");Check(raceInputs.TryGetValue(key,out var input),"Captured ArmorRace input missing "+key);key=input!.ArmorRace.FormKey;}
