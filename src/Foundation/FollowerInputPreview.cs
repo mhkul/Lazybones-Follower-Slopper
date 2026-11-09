@@ -10,6 +10,7 @@ public sealed record FollowerInputPreview(FollowerInputSelection Selection,Follo
 {
     public LeanOverlayNotice OverlayNotice=>LeanOverlayPolicy.Describe(Cosave.Skee);
     public string[] RuntimeAssignmentWarnings=>LeanRuntimeAssignmentPolicy.Warnings(Cosave.Skee);
+    public BuildQualityWarning[] ArmorWarnings=>LeanArmorAssociations.Warnings(Cosave.Skee);
 }
 
 // Landing-screen Continue: reads only the five chosen files, creates no output,

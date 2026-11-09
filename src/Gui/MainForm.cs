@@ -704,7 +704,12 @@ internal sealed class MainForm : Form
             c.Prebuilt.Enabled = !_operationActive;
             UpdateOutputHelp(c.Prebuilt, c.Obody, c.Outputs);
             c.OutputHelp.Text = _setup == null ? (LeanMo2Sources.HasContext?"Environment unresolved. Choose the MO2 instance on Inputs.":"Environment unresolved. Choose the installed Skyrim folder on Inputs.") : (_obodyAvailable ? (_preview?.Cosave.ObodyAssignment=="unassigned"?"This save has no OBody assignment. Installed body and outfits stay as-is.":"OBody is present in the selected Data view.") : "OBody is absent from the confirmed environment. Installed body and outfits stay as-is.");
-            if(_preview?.MaterialConflicts is {Length:>0}){
+            if(_preview?.ArmorWarnings is {Length:>0}){
+                c.OutputHelp.Text="Saved armor/body material effects may differ.";
+                c.OutputHelp.ForeColor=Color.FromArgb(237,198,139);
+                _tips.SetToolTip(c.OutputHelp,string.Join(Environment.NewLine,_preview.ArmorWarnings.Select(x=>x.Warning+" "+x.Detail)
+                    .Concat((_preview.MaterialConflicts??[]).Select(x=>x.Warning)).Concat(_preview.RuntimeAssignmentWarnings)));
+            }else if(_preview?.MaterialConflicts is {Length:>0}){
                 c.OutputHelp.Text="Mouth: finished export used; saved specular override omitted.";
                 c.OutputHelp.ForeColor=Color.FromArgb(237,198,139);
                 _tips.SetToolTip(c.OutputHelp,string.Join(Environment.NewLine,_preview.MaterialConflicts.Select(x=>x.Warning)));

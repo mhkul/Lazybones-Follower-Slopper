@@ -1,4 +1,4 @@
-# Lazybones Follower Slopper 0.1.7: agent guide
+# Lazybones Follower Slopper 0.1.8: agent guide
 
 The Windows x64 application builds a follower ZIP from a selected Skyrim save
 and matching finished RaceMenu export. Operate its WinForms GUI. There is no
@@ -227,7 +227,7 @@ not public source. Editable code is in Gui/Foundation/Writer, Python stages
 in Stages, packagers in tools, and portrait/ICO in `assets/branding/icon-v2`.
 
 Keep `src/LICENSES.txt` and matching dependency-source access when redistributing.
-`Lazybones-Follower-Slopper-0.1.7-thirdparty-source.zip` contains dependency
+`Lazybones-Follower-Slopper-0.1.8-thirdparty-source.zip` contains dependency
 sources, full notices and binary/revision correspondence indexes. Published
 upstream binaries were not independently rebuilt; their own prerequisites
 apply. Mutagen upstream PreBuild deletes cache folders: use an isolated
@@ -235,7 +235,7 @@ upstream profile/cache. This guide adds no public release-packaging command
 or unattended follower-build interface.
 
 The Python native component metadata is in
-dependencies/python-native-components.json. The matching v0.1.7 thirdparty-source
+dependencies/python-native-components.json. The matching v0.1.8 thirdparty-source
 ZIP includes ctypes/libffi source, updated binary/component indexes and full
 notices alongside the existing dependency sources. Preserve that complete
 companion when redistributing application binaries.
@@ -266,3 +266,14 @@ discovery errors explain the available recovery actions.
 Generated follower head parts, including extra parts, are non-playable.
 Private skin names follow the configured follower name. Generated record IDs
 use the selected follower/mod identity while preserving FaceGen bindings.
+
+Saved armor/body material registrations are parsed before Continue. Empty and
+nonselected branches do not block. Meaningful associations without proven
+armor/addon/attached-mesh and material-layer agreement keep captured base
+assets with explicit appearance warnings in settings, results and installation
+instructions. Unknown bounded layouts report unknown appearance extent.
+No saved armor material effect is guessed onto the head or an installed mesh.
+
+Empty or no-effect RaceMenu armor material records no longer block Continue.
+Unsupported saved armor/body material effects allow builds to continue with
+explicit appearance warnings; captured base appearance is retained.

@@ -5,19 +5,22 @@ namespace AutoFollower;
 public sealed record LeanSkeeChunk(uint Tag,uint Version,byte[] Data);
 public sealed record LeanSkeeValue(int Key,int Type,int Index,string? Text,double? Number);
 public sealed record LeanSkeeNode(string Node,string Scope,int Sex,int Perspective,string? Registration,LeanSkeeValue[] Values);
-public sealed record LeanSkeeState(LeanSkeeNode[] Nodes,bool PlayerOverlay,int EmptySets,int PlayerGroups);
+public sealed record LeanSkeeArmor(ulong Actor,ulong Armor,ulong Addon,int Sex,string Node,LeanSkeeValue[] Values,uint Version);
+public sealed record LeanSkeeState(LeanSkeeNode[] Nodes,bool PlayerOverlay,int EmptySets,int PlayerGroups,LeanSkeeArmor[]? ArmorMaterials=null,BuildQualityWarning[]? ArmorWarnings=null);
 
 // Consumed associations only. RaceMenu 0.4.16's OverrideInterface calls its
 // string-table format "Version3" but assigns it value 2 (6379d939, header).
 // Transform format 3 and STTB3 are independent version namespaces.
 public static class LeanSkeeReader
 {
+    sealed class UnknownArmorLayoutException : Exception;
     static uint Tag(string s)=>Encoding.ASCII.GetBytes(s).Aggregate(0u,(n,b)=>(n<<8)|b);
     static string Context(LeanSkeeChunk c)=>"co-save SKEE "+Encoding.ASCII.GetString(BitConverter.GetBytes(c.Tag).Reverse().ToArray())+" chunk (version="+c.Version+", bytes="+c.Data.Length+")";
     public static LeanSkeeState Read(List<LeanSkeeChunk> chunks,ushort selectedSex,SkyrimInputFormats? formats=null)
     {
         formats=SkyrimInputFormats.Resolve(formats);
         string[] strings=[];bool table=false;int empty=0,groups=0;List<LeanSkeeNode> nodes=[];bool overlay=false;
+        List<LeanSkeeArmor> armor=[];List<BuildQualityWarning> armorWarnings=[];HashSet<ulong> armorActors=[];bool readingArmor=false;
         var st=chunks.Where(x=>x.Tag==Tag("STTB")).ToArray();
         if(st.Length>1)throw new InvalidDataException("Duplicate SKEE string table");
         if(st.Length==1){if(st[0].Version!=3)throw new InvalidDataException("Required SKEE associations support STTB3");var r=new BoundedBinary(st[0].Data);strings=Enumerable.Range(0,r.Count(100000)).Select(_=>r.String16()).ToArray();r.End(Context(st[0]));table=true;}
@@ -26,7 +29,7 @@ public static class LeanSkeeReader
         string String(BoundedBinary r){if(!table)throw new InvalidDataException("SKEE association has no STTB");uint id=r.U32();if(id>=strings.Length)throw new InvalidDataException("SKEE association string index invalid");return strings[id];}
         LeanSkeeValue[] Set(bool retain,uint version){var (c,r)=Next("OVST");if(c.Version!=version)throw new InvalidDataException("Unsupported/mismatched SKEE override set version");int count=r.Count(10000);if(count==0&&retain)empty++;List<LeanSkeeValue> values=[];HashSet<(int,int)> keys=[];
             for(int n=0;n<count;n++){var (v,q)=Next("OVRV");if(v.Version!=version)throw new InvalidDataException("Unsupported/mismatched SKEE override value version");int key=q.U16(),type=q.U8(),index=key==9||key is >=20 and <=24||key is >=30 and <=32?q.U8():-1;string? text=null;double? number=null;
-                switch(type){case 0:break;case 1:ulong handle=q.U32()|((ulong)q.U32()<<32);text="TXST-handle:"+handle.ToString("X16");break;case 2:text=String(q);break;case 3:number=unchecked((int)q.U32());break;case 4:number=q.Float();if(!double.IsFinite(number.Value))throw new InvalidDataException("SKEE nonfinite override");break;case 5:byte b=q.U8();if(b>1)throw new InvalidDataException("SKEE Boolean invalid");number=b;break;default:throw new InvalidDataException("SKEE override type unsupported");}
+                switch(type){case 0:break;case 1:ulong handle=q.U32()|((ulong)q.U32()<<32);text="TXST-handle:"+handle.ToString("X16");break;case 2:text=String(q);break;case 3:number=unchecked((int)q.U32());break;case 4:number=q.Float();if(!double.IsFinite(number.Value))throw new InvalidDataException("SKEE nonfinite override");break;case 5:byte b=q.U8();if(b>1)throw new InvalidDataException("SKEE Boolean invalid");number=b;break;default:if(readingArmor)throw new UnknownArmorLayoutException();throw new InvalidDataException("SKEE override type unsupported");}
                 if(!keys.Add((key,index)))throw new InvalidDataException("Duplicate SKEE override key/index");if(type!=0)values.Add(new(key,type,index,text,number));}
             return values.ToArray();}
         void Registration(int sex,int perspective,string scope,string? parent,bool retain,uint version){int count=current!.Count(10000);for(int i=0;i<count;i++){var (c,q)=Next("NOEN");if(c.Version!=version)throw new InvalidDataException("Unsupported/mismatched SKEE node entry version");string node=String(q);var values=Set(retain&&sex==selectedSex,version);if(retain&&sex==selectedSex&&values.Length>0)nodes.Add(new(node,scope,sex,perspective,parent,values));}}
@@ -35,10 +38,41 @@ public static class LeanSkeeReader
             if(c.Tag==Tag("ACTM")||c.Tag==Tag("NDEN")){current?.End(currentContext);at++;currentContext=Context(c);var r=current=new BoundedBinary(c.Data);ulong handle=r.U32()|((ulong)r.U32()<<32);bool player=(uint)handle==0x14;if(!player){current=null;continue;}groups++;
                 if(c.Tag==Tag("ACTM")){if(c.Version!=3)throw new InvalidDataException("Unsupported SKEE transform version");Multi(sex=>Multi(perspective=>{int count=current!.Count(10000);for(int i=0;i<count;i++){var (entry,q)=Next("NOTM");if(entry.Version!=3)throw new InvalidDataException("Unsupported SKEE transform entry version");string node=String(q);Registration(sex,perspective,"transform",node,player,3);}}));}
                 else{if(c.Version is not (2 or 3))throw new InvalidDataException("Required SKEE node material layout supports versions 2 and 3; found "+c.Version);Multi(sex=>Registration(sex,-1,"material",null,player,c.Version));}current!.End(currentContext);current=null;
+            }else if(c.Tag==Tag("ACEN")){
+                current?.End(currentContext);at++;currentContext=Context(c);current=new(c.Data);ulong actor=current.U64();bool player=(uint)actor==0x14;
+                if(!armorActors.Add(actor))throw new InvalidDataException("Duplicate SKEE armor actor registration");
+                int start=armor.Count;readingArmor=true;
+                bool Child(uint tag)=>tag==Tag("AREN")||tag==Tag("AAEN")||tag==Tag("NOEN")||tag==Tag("OVST")||tag==Tag("OVRV");
+                try{
+                    // Both retained producers serialize UInt64 keys and STTB indices
+                    // for version 2. Unknown layouts are omitted only at outer SKSE
+                    // record boundaries; never reinterpret them as proven empty.
+                    if(c.Version!=2)throw new UnknownArmorLayoutException();
+                    if(player)groups++;
+                    Multi(sex=>{int count=current!.Count(10000);HashSet<ulong> armors=[];
+                        for(int i=0;i<count;i++){var (ac,ar)=Next("AREN");if(ac.Version!=c.Version)throw new InvalidDataException("Mismatched SKEE armor entry version");ulong ah=ar.U64();if(!armors.Add(ah))throw new InvalidDataException("Duplicate SKEE armor registration");int addons=ar.Count(10000);HashSet<ulong> seenAddons=[];
+                            for(int j=0;j<addons;j++){var (ad,aq)=Next("AAEN");if(ad.Version!=c.Version)throw new InvalidDataException("Mismatched SKEE addon entry version");ulong dh=aq.U64();if(!seenAddons.Add(dh))throw new InvalidDataException("Duplicate SKEE addon registration");int countNodes=aq.Count(10000);HashSet<string> seenNodes=new(StringComparer.Ordinal);
+                                for(int k=0;k<countNodes;k++){var (nc,nq)=Next("NOEN");if(nc.Version!=c.Version)throw new InvalidDataException("Mismatched SKEE armor node version");string name=String(nq);if(!seenNodes.Add(name))throw new InvalidDataException("Duplicate SKEE armor node");var values=Set(player&&sex==selectedSex,c.Version);if(player&&sex==selectedSex&&values.Length>0){
+                                    foreach(var value in values.Where(v=>v.Key==9&&v.Type==2))LeanArmorAssociations.Texture(value.Text);
+                                    armor.Add(new(actor,ah,dh,sex,name,values,c.Version));
+                                }}
+                            }
+                        }
+                    });
+                    current!.End(currentContext);
+                    if(at<chunks.Count&&Child(chunks[at].Tag))throw new InvalidDataException("Unexpected SKEE armor child after completed hierarchy");
+                }catch(UnknownArmorLayoutException){
+                    // A new value type may also contain continuation bytes for
+                    // another sex. Discard the entire bounded ACEN group, including
+                    // already parsed values, rather than guessing its tail layout.
+                    armor.RemoveRange(start,armor.Count-start);
+                    while(at<chunks.Count&&Child(chunks[at].Tag))at++;
+                    if(player)armorWarnings.Add(LeanArmorAssociations.Unknown(c.Version));
+                }finally{readingArmor=false;current=null;}
             }else if(c.Tag==Tag("AOVL")){at++;if(c.Version!=1||c.Data.Length!=8)throw new InvalidDataException("Unsupported SKEE overlay actor framing");overlay|=BitConverter.ToUInt32(c.Data)==0x14;}
-            else if(c.Tag==Tag("ACEN")||c.Tag==Tag("WPEN")||c.Tag==Tag("SKNR")){if(c.Data.Length<8)throw new InvalidDataException("SKEE actor material framing invalid");if(BitConverter.ToUInt32(c.Data)==0x14)throw new InvalidDataException("Required player SKEE "+Encoding.ASCII.GetString(BitConverter.GetBytes(c.Tag).Reverse().ToArray())+" associations remain unsupported");at++;}
+            else if(c.Tag==Tag("WPEN")||c.Tag==Tag("SKNR")){if(c.Data.Length<8)throw new InvalidDataException("SKEE actor material framing invalid");if(BitConverter.ToUInt32(c.Data)==0x14)throw new InvalidDataException("Required player SKEE "+Encoding.ASCII.GetString(BitConverter.GetBytes(c.Tag).Reverse().ToArray())+" associations remain unsupported");at++;}
             else at++;
         }
-        return new(nodes.ToArray(),overlay,empty,groups);
+        return new(nodes.ToArray(),overlay,empty,groups,armor.ToArray(),armorWarnings.ToArray());
     }
 }
